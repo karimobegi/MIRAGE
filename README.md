@@ -31,12 +31,12 @@ Enrico Rukzio <sup>a</sup>
 `MIRAGE` utilizes multiple computational models that need to be converted to the `ONNX` format.
 After acquiring an ONNX model, add it to the Unity project.
 #### Object Detection & Segmentation
-We use [YOLO11-seg](https://github.com/ultralytics/ultralytics) for Object Detection and segmentation. It can be converted to `ONNX` with this Python code:
+We use [YOLO26-seg](https://github.com/ultralytics/ultralytics) for Object Detection and Segmentation. It can be converted to `ONNX` with this Python code:
 
 ```python
 from ultralytics import YOLO
 
-model = YOLO("yolo11s-seg.pt")
+model = YOLO("yolo26s-seg.pt")
 model.export(format="onnx")
 ```
 For more detailed instructions, please refer to the [Official Documentation](https://docs.ultralytics.com/tasks/segment/)
