@@ -2127,6 +2127,10 @@ PrefabInstance:
       propertyPath: m_LocalEulerAnglesHint.z
       value: 0
       objectReference: {fileID: 0}
+    - target: {fileID: 8574407316868394890, guid: 828fc285a4ff36e41a83841d3256046d, type: 3}
+      propertyPath: m_AnchoredPosition.y
+      value: 236.2
+      objectReference: {fileID: 0}
     - target: {fileID: 8626289241776199122, guid: 828fc285a4ff36e41a83841d3256046d, type: 3}
       propertyPath: m_AnchorMax.y
       value: 0
@@ -2434,7 +2438,7 @@ VideoPlayer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 91498959}
   m_Enabled: 1
-  m_VideoClip: {fileID: 32900000, guid: 02dddbdba43924688a966435b7467fad, type: 3}
+  m_VideoClip: {fileID: 32900000, guid: 6fdc0e5e5ac3630458f1fcc433da2602, type: 3}
   m_TargetCameraAlpha: 1
   m_TargetCamera3DLayout: 0
   m_TargetCamera: {fileID: 0}
@@ -2448,14 +2452,12 @@ VideoPlayer:
   m_TimeUpdateMode: 2
   m_PlaybackSpeed: 1
   m_AudioOutputMode: 2
-  m_TargetAudioSources:
-  - {fileID: 0}
-  m_DirectAudioVolumes:
-  - 1
+  m_TargetAudioSources: []
+  m_DirectAudioVolumes: []
   m_Url: 
-  m_EnabledAudioTracks: 01
-  m_DirectAudioMutes: 00
-  m_ControlledAudioTrackCount: 1
+  m_EnabledAudioTracks: 
+  m_DirectAudioMutes: 
+  m_ControlledAudioTrackCount: 0
   m_PlayOnAwake: 1
   m_SkipOnDrop: 1
   m_Looping: 0
@@ -2981,7 +2983,7 @@ PrefabInstance:
     - target: {fileID: 5679560247574380171, guid: ab86f2914800cda49b5760ab0fbd7af5, type: 3}
       propertyPath: ModelAsset
       value: 
-      objectReference: {fileID: 5022602860645237092, guid: e66ae6572caae4aa1ac39ac744f1a49c, type: 3}
+      objectReference: {fileID: 5022602860645237092, guid: a0de0788b48e20446952a95fd59032cf, type: 3}
     - target: {fileID: 5679560247574380171, guid: ab86f2914800cda49b5760ab0fbd7af5, type: 3}
       propertyPath: UpdateRate
       value: 0.1
@@ -3034,7 +3036,7 @@ PrefabInstance:
     - target: {fileID: 1935412686521121079, guid: 9f3ac5ef698223e42b614d76bb999408, type: 3}
       propertyPath: ModelAsset
       value: 
-      objectReference: {fileID: 5022602860645237092, guid: 01e95d7df1a1b43c0b512e0fae700fa8, type: 3}
+      objectReference: {fileID: 5022602860645237092, guid: ce6f262c497e62f4ca89ec7830bf1f13, type: 3}
     - target: {fileID: 1935412686521121079, guid: 9f3ac5ef698223e42b614d76bb999408, type: 3}
       propertyPath: ImageHeight
       value: 360
@@ -4306,7 +4308,7 @@ PrefabInstance:
     - target: {fileID: 4472163729129746862, guid: 4ffc797f9536ffc42abd599f1a4196ce, type: 3}
       propertyPath: ModelAsset
       value: 
-      objectReference: {fileID: 5022602860645237092, guid: 21d5df29715e7442da6074cc8e92c288, type: 3}
+      objectReference: {fileID: 5022602860645237092, guid: 1cab43fa08f294b488ea47b785e71b7d, type: 3}
     - target: {fileID: 4472163729129746862, guid: 4ffc797f9536ffc42abd599f1a4196ce, type: 3}
       propertyPath: OutputImage
       value: 

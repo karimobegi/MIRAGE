@@ -37,7 +37,7 @@ We use [YOLO26-seg](https://github.com/ultralytics/ultralytics) for Object Detec
 from ultralytics import YOLO
 
 model = YOLO("yolo26s-seg.pt")
-model.export(format="onnx")
+model.export(format="onnx", end2end = False)
 ```
 For more detailed instructions, please refer to the [Official Documentation](https://docs.ultralytics.com/tasks/segment/)
 

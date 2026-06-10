@@ -100,8 +100,15 @@ public class YOLOSegmentationRunner : SegmentationRunner
         }
     }
 
+    public float[] Scores {
+        get {
+            return scoresData;
+        }
+    }
+
     private int[] labelIDData;
     private float[] bboxData;
+    private float[] scoresData;
 
     
 
@@ -133,11 +140,13 @@ public class YOLOSegmentationRunner : SegmentationRunner
     /// </summary>
     private ComputeShader toCPUShader;
     private int extractLabelIDsKernel;
-    private ComputeBuffer labelIDsOutputBuffer, bboxOutputBuffer;
+    private ComputeBuffer labelIDsOutputBuffer, bboxOutputBuffer, scoresOutputBuffer;
 
     public ComputeBuffer ClassIdsBuffer { get => labelIDsOutputBuffer; }
 
     public ComputeBuffer BBoxBuffer { get => bboxOutputBuffer; }
+
+    public ComputeBuffer ScoresBuffer { get => scoresOutputBuffer; }
 
 #endregion
 
@@ -312,8 +321,10 @@ public class YOLOSegmentationRunner : SegmentationRunner
         OutputBuffer = new ComputeBuffer(OutputWidth * OutputHeight, sizeof(int) * 2);
         labelIDsOutputBuffer = new ComputeBuffer(MaxObjects, sizeof(int));
         bboxOutputBuffer = new ComputeBuffer(MaxObjects * 4, sizeof(float));
+        scoresOutputBuffer = new ComputeBuffer(MaxObjects, sizeof(float));
         bboxData = new float[MaxObjects * 4];
         labelIDData = new int[MaxObjects];
+        scoresData = new float[MaxObjects];
 
         instanceSegmentationShader = Resources.Load<ComputeShader>("Models/YOLO/InstanceSegmentationShader");
         instanceSegmentationKernel = instanceSegmentationShader.FindKernel("InstanceSegmentation");
@@ -340,7 +351,7 @@ public class YOLOSegmentationRunner : SegmentationRunner
         instanceSegmentationShader.SetBuffer(instanceSegmentationKernel, "InputMasks", ComputeTensorData.Pin(maskTensor).buffer);
         instanceSegmentationShader.SetBuffer(instanceSegmentationKernel, "BoundingBoxes", ComputeTensorData.Pin(bboxTensor).buffer);
         instanceSegmentationShader.SetBuffer(instanceSegmentationKernel, "LabelIDs", ComputeTensorData.Pin(labelIDTensor).buffer);
-      //  instanceSegmentationShader.SetBuffer(instanceSegmentationKernel, "Scores", ComputeTensorData.Pin(scoresTensor).buffer);
+        instanceSegmentationShader.SetBuffer(instanceSegmentationKernel, "Scores", ComputeTensorData.Pin(scoresTensor).buffer);
         instanceSegmentationShader.SetBuffer(instanceSegmentationKernel, "OutputBuffer", OutputBuffer);
         instanceSegmentationShader.SetInt("NumMasks", numDetections);
         
@@ -382,8 +393,10 @@ public class YOLOSegmentationRunner : SegmentationRunner
         // Set shader parameters
         toCPUShader.SetBuffer(extractLabelIDsKernel, "LabelIDsInput", ComputeTensorData.Pin(labelIDTensor).buffer);
         toCPUShader.SetBuffer(extractLabelIDsKernel, "BBoxInput", ComputeTensorData.Pin(bboxTensor).buffer);
+        toCPUShader.SetBuffer(extractLabelIDsKernel, "ScoresInput", ComputeTensorData.Pin(scoresTensor).buffer);
         toCPUShader.SetBuffer(extractLabelIDsKernel, "LabelIDsOutput", labelIDsOutputBuffer);
         toCPUShader.SetBuffer(extractLabelIDsKernel, "BBoxOutput", bboxOutputBuffer);
+        toCPUShader.SetBuffer(extractLabelIDsKernel, "ScoresOutput", scoresOutputBuffer);
         toCPUShader.SetInt("NumDetections", numDetections);
 
         // Dispatch shader
@@ -392,11 +405,14 @@ public class YOLOSegmentationRunner : SegmentationRunner
         
         //int[] labelResults = new int[numDetections];
         //float[] bboxResults = new float[numDetections * 4];
+        //float[] scoresResults = new float[numDetections];
         labelIDsOutputBuffer.GetData(labelIDData);
         bboxOutputBuffer.GetData(bboxData);
+        scoresOutputBuffer.GetData(scoresData);
         // Create new native arrays
         //bboxData = new NativeArray<float>(bboxResults, Allocator.Persistent);
         //labelIDData = new NativeArray<int>(labelResults, Allocator.Persistent);
+        //scoresData = new NativeArray<float>(scoresResults, Allocater.Persistent);
 
     }
 
@@ -431,20 +447,28 @@ public class YOLOSegmentationRunner : SegmentationRunner
         {
             labelIDsOutputBuffer.Dispose();
         }
+        if (scoresOutputBuffer != null)
+        {
+            scoresOutputBuffer.Dispose();
+        }
         //if (bboxData.IsCreated) bboxData.Dispose();
         //if (labelIDData.IsCreated) labelIDData.Dispose();
+        //if (scoresData.IsCreated) scoresData.Dispose();
     }
 
     public override void DisposeOutput()
     {
         if (labelIDTensor != null) labelIDTensor.Dispose();
         if (bboxTensor != null) bboxTensor.Dispose();
+        if (scoresTensor != null) scoresTensor.Dispose();
        // if (bboxData.IsCreated) bboxData.Dispose();
        // if (labelIDData.IsCreated) labelIDData.Dispose();
+       // if (scoresData.IsCreated) scoresData.Dispose();
 
          
  //       if (labelIDsOutputBuffer != null) labelIDsOutputBuffer.Dispose();
  //       if(bboxOutputBuffer != null)bboxOutputBuffer.Dispose();
+ //       if (scoresOutputBuffer != null) scoresOutputBuffer.Dispose();
 
     }
 

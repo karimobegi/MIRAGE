@@ -56,7 +56,7 @@ public class ObjectInfoPostProcessor : CPUPostProcessor {
     /// <param name="objectIndex"></param>
     /// <returns></returns>
     private string GetLabelText(int objectIndex) {
-        int labelId = yolo11.LabelIDs[objectIndex];
+        int labelId = yolo26.LabelIDs[objectIndex];
         string className = labelId < classNames.Length ? classNames[labelId] : labelId.ToString();
         return $"{className}\n{depthEstimationRunner.DepthData[objectIndex]:0.00}m";
     }

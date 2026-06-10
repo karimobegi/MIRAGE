@@ -7,7 +7,7 @@ using UnityEngine.UI;
 
 /// <summary>
 /// Parent class for PostProcessing effects that run on the CPU
-/// Assumes that YOLO11 is used for object detection as it requires individual objects
+/// Assumes that YOLO26 is used for object detection as it requires individual objects
 /// 
 /// </summary>
 public abstract class CPUPostProcessor : MonoBehaviour, IEffectHandler
@@ -28,7 +28,7 @@ public abstract class CPUPostProcessor : MonoBehaviour, IEffectHandler
     public Vector2 Offset = new Vector2(0, 0);
     
     public bool IsRunning = false;
-    protected YOLOSegmentationRunner yolo11; //per-object detection is required for CPU Post processing effects
+    protected YOLOSegmentationRunner yolo26; //per-object detection is required for CPU Post processing effects
     protected DepthEstimationRunner depthEstimationRunner;
     protected RectTransform outputContainer;
 
@@ -40,11 +40,11 @@ public abstract class CPUPostProcessor : MonoBehaviour, IEffectHandler
 
 #region Setup
     public virtual void Initialize(YOLOSegmentationRunner r, DepthEstimationRunner d, RectTransform outputContainer) {
-        yolo11 = r;
+        yolo26 = r;
         depthEstimationRunner = d;
         this.outputContainer = outputContainer;
-        imgWidth = yolo11.OutputWidth;
-        imgHeight = yolo11.OutputHeight;
+        imgWidth = yolo26.OutputWidth;
+        imgHeight = yolo26.OutputHeight;
         
       //  scalingFactorX = OutputContainer.sizeDelta.x / imgWidth;
        // scalingFactorY = OutputContainer.sizeDelta.y / imgHeight;
@@ -92,7 +92,7 @@ public abstract class CPUPostProcessor : MonoBehaviour, IEffectHandler
 
         int activeCount = 0;
         try {
-            for(int i = 0; i < yolo11.NumObjDetected; i++) {
+            for(int i = 0; i < yolo26.NumObjDetected; i++) {
                 if(IsValidObject(i)) {
                     Vector2 position = CalculatePositionWithOffset(i);
                     Vector2 size = CalculateSize(i);
@@ -128,14 +128,14 @@ public abstract class CPUPostProcessor : MonoBehaviour, IEffectHandler
     /// <returns></returns>
     protected Vector2 CalculatePositionWithOffset(int objectIndex) {
 
-        var x = yolo11.BBoxes[objectIndex * 4] * scalingFactorX + Offset.x * scalingFactorX;
-        var y = yolo11.BBoxes[objectIndex * 4 + 1] * scalingFactorY + Offset.y * scalingFactorY;
+        var x = yolo26.BBoxes[objectIndex * 4] * scalingFactorX + Offset.x * scalingFactorX;
+        var y = yolo26.BBoxes[objectIndex * 4 + 1] * scalingFactorY + Offset.y * scalingFactorY;
         return new Vector2(x, -y); //Assume anchor is at top left
     }
 
     protected Vector2 CalculatePosition(int objectIndex) {
-        var x = yolo11.BBoxes[objectIndex * 4] * scalingFactorX;
-        var y = yolo11.BBoxes[objectIndex * 4 + 1] * scalingFactorY;
+        var x = yolo26.BBoxes[objectIndex * 4] * scalingFactorX;
+        var y = yolo26.BBoxes[objectIndex * 4 + 1] * scalingFactorY;
         return new Vector2(x, -y); //Assume anchor is at top left
     }
 
@@ -146,8 +146,8 @@ public abstract class CPUPostProcessor : MonoBehaviour, IEffectHandler
     /// <param name="objectIndex"></param>
     /// <returns></returns>
     protected Vector2 CalculateSize(int objectIndex) {
-        var width = yolo11.BBoxes[objectIndex * 4 + 2] * scalingFactorX;
-        var height = yolo11.BBoxes[objectIndex * 4 + 3] * scalingFactorY;
+        var width = yolo26.BBoxes[objectIndex * 4 + 2] * scalingFactorX;
+        var height = yolo26.BBoxes[objectIndex * 4 + 3] * scalingFactorY;
         return new Vector2(width, height);
     }
 
@@ -156,7 +156,7 @@ public abstract class CPUPostProcessor : MonoBehaviour, IEffectHandler
     }
 
     protected bool IsValidObject(int objectIndex) {
-        int classId = yolo11.LabelIDs[objectIndex];
+        int classId = yolo26.LabelIDs[objectIndex];
         float depth = depthEstimationRunner.DepthData[objectIndex];
 
         if (classSettingsMap.TryGetValue(classId, out List<PostProcessorSetting> settings)) {
@@ -170,7 +170,7 @@ public abstract class CPUPostProcessor : MonoBehaviour, IEffectHandler
     }
 
     protected Color GetColorForObject(int objectIndex) {
-        int classId = yolo11.LabelIDs[objectIndex];
+        int classId = yolo26.LabelIDs[objectIndex];
         float depth = depthEstimationRunner.DepthData[objectIndex];
 
         if (classSettingsMap.TryGetValue(classId, out List<PostProcessorSetting> settings)) {
