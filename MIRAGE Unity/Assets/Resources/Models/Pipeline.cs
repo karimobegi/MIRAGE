@@ -85,7 +85,6 @@ public class Pipeline : MonoBehaviour
         //Initialize postprocessors
         if (segmentationModel is YOLOSegmentationRunner)
         {
-
             cpuPostProcessors = FindObjectsByType<CPUPostProcessor>(FindObjectsSortMode.None);
             foreach (var processor in cpuPostProcessors)
             {
