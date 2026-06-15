@@ -41,6 +41,12 @@ model.export(format="onnx", end2end = False)
 ```
 For more detailed instructions, please refer to the [Official Documentation](https://docs.ultralytics.com/tasks/segment/)
 
+#### Multi-Object Tracking
+
+We use [ByteTrack](https://github.com/penspanic/ByteTrack-CSharp) for persistent multi-object tracking across frames, ensuring stable object identities for post-processing effects. ByteTrack is included in the project under `Assets/ByteTrack-CSharp/`. Install its dependencies:
+
+1. Enable `Allow 'unsafe' Code` in `Edit > Project Settings > Player > Other Settings`.
+
 #### Depth Estimation
 
 We use [Depth Anything V2](https://github.com/DepthAnything/Depth-Anything-V2) for metric depth estimation.
