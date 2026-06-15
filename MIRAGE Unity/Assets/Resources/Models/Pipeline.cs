@@ -88,7 +88,7 @@ public class Pipeline : MonoBehaviour
             cpuPostProcessors = FindObjectsByType<CPUPostProcessor>(FindObjectsSortMode.None);
             foreach (var processor in cpuPostProcessors)
             {
-                processor.Initialize(segmentationModel as YOLOSegmentationRunner, depthModel, CPUPostProcessingContainer);
+                processor.Initialize(segmentationModel as YOLOSegmentationRunner, depthModel, CPUPostProcessingContainer, this);
             }
         }
 
@@ -109,7 +109,7 @@ public class Pipeline : MonoBehaviour
         var benchmarkManagerComponent = FindAnyObjectByType<BenchmarkManager>();
         benchmarkManager = benchmarkManagerComponent != null ? benchmarkManagerComponent : new NullBenchmarkManager(); //Null Object Pattern
 
-        tracker = new BYTETracker(obj => new LabelledSTrack(obj.rect, obj.prob, obj.label));
+        tracker = new BYTETracker(obj => new LabelledSTrack(obj.rect, obj.prob, obj.label, obj.detection));
         labelledTracks = new List<LabelledSTrack>();
     }
 #endregion
@@ -130,7 +130,8 @@ public class Pipeline : MonoBehaviour
 
             int label = labelIDs[i];
             float score = scores[i];
-            objects.Add(new ByteTrackCSharp.Object(rect, label, score));
+            int detection = i;
+            objects.Add(new ByteTrackCSharp.Object(rect, label, score, detection));
             }
 
             List<STrack> tracks = tracker.update(objects);

@@ -6,10 +6,10 @@ public class ByteTrackTest : MonoBehaviour
 {
     void Start()
     {
-        var tracker = new BYTETracker(obj => new LabelledSTrack(obj.rect, obj.prob, obj.label));
+        var tracker = new BYTETracker(obj => new LabelledSTrack(obj.rect, obj.prob, obj.label, obj.detection));
         
         var fakeDetections = new List<Object> {
-            new Object(new Rect(100, 100, 50, 80), 2, 0.9f),new Object(new Rect(200, 1500, 50, 80), 2, 0.7f)
+            new Object(new Rect(100, 100, 50, 80), 2, 0.9f, 1),new Object(new Rect(200, 1500, 50, 80), 2, 0.7f, 2)
         };
         
         var tracks = tracker.update(fakeDetections);

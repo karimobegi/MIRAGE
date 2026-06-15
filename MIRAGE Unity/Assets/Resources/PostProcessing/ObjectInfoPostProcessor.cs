@@ -4,6 +4,7 @@ using System.Linq;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
+using ByteTrackCSharp;
 
 /// <summary>
 /// PostProcessor that displays object information as text
@@ -17,9 +18,9 @@ public class ObjectInfoPostProcessor : CPUPostProcessor {
     private List<TMP_Text> textObjects = new List<TMP_Text>();
     private string[] classNames;
 
-    public override void Initialize(YOLOSegmentationRunner r, DepthEstimationRunner d, RectTransform op)
+    public override void Initialize(YOLOSegmentationRunner r, DepthEstimationRunner d, RectTransform op, Pipeline p)
     {
-        base.Initialize(r, d, op);
+        base.Initialize(r, d, op, p);
         classes = r.TextAsset; //get classes from YOLO for formatting
         classNames = classes.text.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
     }
@@ -28,19 +29,19 @@ public class ObjectInfoPostProcessor : CPUPostProcessor {
         return textObjects.Count > index;
     }
 
-    protected override void UpdateObject(int index, int objectIndex, Vector2 position, Vector2 size) {
+    protected override void UpdateObject(int index, LabelledSTrack track, Vector2 position, Vector2 size) {
         textObjects[index].GetComponent<RectTransform>().anchoredPosition = position;
         textObjects[index].gameObject.SetActive(true);
-        textObjects[index].text = GetLabelText(objectIndex);
-        textObjects[index].color = GetColorForObject(objectIndex);
+        textObjects[index].text = GetLabelText(track);
+        textObjects[index].color = GetColorForObject(track);
     }
 
-    protected override void CreateObject(int objectIndex, Vector2 position, Vector2 size) {
+    protected override void CreateObject(LabelledSTrack track, Vector2 position, Vector2 size) {
         GameObject obj = Instantiate(prefab, outputContainer.transform);
         obj.GetComponent<RectTransform>().anchoredPosition = position;
         TMP_Text text = obj.GetComponentInChildren<TMP_Text>();
-        text.text = GetLabelText(objectIndex);
-        text.color = GetColorForObject(objectIndex);
+        text.text = GetLabelText(track);
+        text.color = GetColorForObject(track);
         textObjects.Add(text);
     }
 
@@ -55,10 +56,10 @@ public class ObjectInfoPostProcessor : CPUPostProcessor {
     /// </summary>
     /// <param name="objectIndex"></param>
     /// <returns></returns>
-    private string GetLabelText(int objectIndex) {
-        int labelId = yolo26.LabelIDs[objectIndex];
+    private string GetLabelText(LabelledSTrack track) {
+        int labelId = track.Label;
         string className = labelId < classNames.Length ? classNames[labelId] : labelId.ToString();
-        return $"{className}\n{depthEstimationRunner.DepthData[objectIndex]:0.00}m";
+        return $"{className}\n{depthEstimationRunner.DepthData[track.Detection]:0.00}m";
     }
 
     protected override void OnClassesUpdated()

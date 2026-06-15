@@ -66,7 +66,7 @@ namespace ByteTrackCSharp{
             TrackletLength = 0;
         }
 
-        public void reActivate(STrack new_track, int frame_id, int new_track_id = -1)
+        public virtual void reActivate(STrack new_track, int frame_id, int new_track_id = -1)
         {
             updateKalmanFilters(new_track);
             updateRect();
