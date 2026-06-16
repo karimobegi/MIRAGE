@@ -49,8 +49,18 @@ We use [ByteTrack](https://github.com/penspanic/ByteTrack-CSharp) for persistent
 
 #### Depth Estimation
 
-We use [Depth Anything V2](https://github.com/DepthAnything/Depth-Anything-V2) for metric depth estimation.
-1. Download the `depth_anything_v2_vits_outdoor_dynamic` model from [this repository](https://github.com/fabio-sim/Depth-Anything-ONNX/releases/tag/v2.0.0).
+We use [Depth Anything V3](https://github.com/ByteDance-Seed/Depth-Anything-3) (DA3-Small) for relative depth estimation.
+
+1. Clone the [Depth-Anything-3-Onnx](https://github.com/devin-lai/Depth-Anything-3-Onnx) repository.
+2. Install dependencies:
+```bash
+pip install -r requirements.txt addict safetensors
+```
+3. Export the model:
+```bash
+python export_onnx.py --model depth-anything/DA3-SMALL --process-res 504 --output DA3-SMALL-504.onnx
+```
+4. Add the exported `DA3-SMALL-504.onnx` file to the Unity project.
 
 #### Inpainting
 We use the [MI-GAN](https://github.com/Picsart-AI-Research/MI-GAN) Inpainting Model to realize effects such as `Remove` or `Opacity`. We modified their ONNX export pipeline to improve compatibility with ours.
