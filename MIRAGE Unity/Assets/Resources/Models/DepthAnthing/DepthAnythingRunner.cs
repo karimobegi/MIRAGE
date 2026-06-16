@@ -9,10 +9,9 @@ using UnityEngine.UIElements;
 
 /// <summary>
 /// Depth Anything Depth Estimation
-/// using Depth Anything v2: https://github.com/DepthAnything/Depth-Anything-V2
+/// using Depth Anything V3 (DA3-Small): https://github.com/ByteDance-Seed/Depth-Anything-3
 /// 
-/// ONNX Models taken from: https://github.com/fabio-sim/Depth-Anything-ONNX
-/// 
+/// ONNX export via: https://github.com/devin-lai/Depth-Anything-3-Onnx
 /// 
 /// Author: J-Britten
 /// </summary>
@@ -20,14 +19,14 @@ public class DepthAnythingRunner : DepthEstimationRunner
 {   
 #region Variables
     /// <summary>
-    /// Default parameters for a Logitech C920 Pro Webcam
+    /// Camera parameters — unused with DA3-Small (relative depth),
+    /// retained for potential future metric depth integration.
     /// </summary>
     public float SensorWidthPX = 1280f; //this should match the OutputWidth 
     public float FocalLengthMM = 3.67f;
 
     public float SensorWidthMM = 5.7f;
 
-    private float focalLengthPX;
     public override ComputeBuffer ObjectDepthBuffer {get => objectDepthBuffer;}
 
     private ComputeBuffer objectDepthBuffer;
@@ -86,9 +85,6 @@ public class DepthAnythingRunner : DepthEstimationRunner
         objectDepthCompute.SetInt("ImageWidth", OutputWidth);
         objectDepthCompute.SetInt("ImageHeight", OutputHeight);
         objectDepthCompute.SetFloat("FocalLengthScale", 1.0f);
-
-        float fovRadians = 2.0f * Mathf.Atan((SensorWidthMM / 2.0f) / FocalLengthMM);
-        objectDepthCompute.SetFloat("FOVRadians", fovRadians);
 
         threadGroupsX = Mathf.CeilToInt(OutputWidth / 8.0f);
         threadGroupsY = Mathf.CeilToInt(OutputHeight / 8.0f);
