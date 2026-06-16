@@ -226,7 +226,8 @@ public class Pipeline : MonoBehaviour
 #endregion
 
 #region Sequential Execution
-    float inferenceTime;    private IEnumerator RunSequentialPipeline()
+    float inferenceTime;    
+    private IEnumerator RunSequentialPipeline()
     {
         while (true)
         {

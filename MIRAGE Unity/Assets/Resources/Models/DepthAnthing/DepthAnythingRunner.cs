@@ -52,45 +52,32 @@ public class DepthAnythingRunner : DepthEstimationRunner
 #region Model Preparation
     protected override void PrepareModel()
     {
-        /*float scaleW = (float) InputWidth / (float) ImageWidth; //Whatever your IDE claims, these casts are necessary
-        float scaleH = (float) InputHeight / (float)ImageHeight;
-        float scale = Mathf.Max(scaleW, scaleH);
-*/
-
-        //Focal length scaling (experimental)
-        focalLengthPX = SensorWidthPX* FocalLengthMM / SensorWidthMM;
-      
-        float focalLengthScale = focalLengthPX  / 1000f;
-
-        toTensor = new TextureTransform().SetDimensions(InputWidth,InputHeight,3);//.SetDimensions(InputWidth, InputHeight, 3);//.SetDimensions(scaledWidth,scaledHeight,3);
+        toTensor = new TextureTransform().SetDimensions(InputWidth, InputHeight, 3);
         
-        //Model needs the input to be divisible by 14, we thus pad the input to the nearest larger multiple of 4
         pad_w = Mathf.CeilToInt(InputWidth / 14.0f) * 14 - InputWidth;
         pad_h = Mathf.CeilToInt(InputHeight / 14.0f) * 14 - InputHeight;
         
-        int[] padding = new int[] {0, pad_w, 0, pad_h}; //width left, width right, height top, height bottom (since origin is top left)
+        int[] padding = new int[] {0, pad_w, 0, pad_h};
         var model = Unity.InferenceEngine.ModelLoader.Load(ModelAsset);
 
         var graph = new Unity.InferenceEngine.FunctionalGraph();
 
-        var input = graph.AddInput(model, 0); //this is dynamic but set to the scaledWidth and Height using toTensor Texture transform
+        var input = graph.AddInput(model, 0);
 
         input = Unity.InferenceEngine.Functional.Pad(input, padding, paddingValue);
 
         var outputs = Unity.InferenceEngine.Functional.Forward(model, input);
-        var output = outputs[0];
-        var slicedOutput = output[.., 0..InputHeight, 0..InputWidth]; //remove the pad
-        slicedOutput= Unity.InferenceEngine.Functional.Unsqueeze(slicedOutput, 0);
-  
-       // slicedOutput = Functional.Interpolate(slicedOutput, new int[] {OutputHeight, OutputWidth}, mode: "nearest"); //this causes issues sometimes
-        var depthTexture = slicedOutput / 80f;        
-        depthTexture = depthTexture * focalLengthScale;
+        var output = outputs[0]; // (batch, 1, H_padded, W_padded)
 
-              
+        // Explicitly slice all 4 dims — two dots for the two leading dims (batch, channel)
+        var slicedOutput = output[.., .., 0..InputHeight, 0..InputWidth];
+
+        // DA3 outputs metric depth — normalize for display only
+        var depthTexture = slicedOutput / 4f;
+            
         runtimeModel = graph.Compile(slicedOutput, depthTexture);
 
         objectDepthBuffer = new ComputeBuffer(MaxObjects, sizeof(float));
-
         objectDepths = new float[MaxObjects];
         objectDepthBuffer.SetData(objectDepths);
 
@@ -98,15 +85,11 @@ public class DepthAnythingRunner : DepthEstimationRunner
         objectDepthKernel = objectDepthCompute.FindKernel("ObjectDepth");
         objectDepthCompute.SetInt("ImageWidth", OutputWidth);
         objectDepthCompute.SetInt("ImageHeight", OutputHeight);
-        objectDepthCompute.SetFloat("FocalLengthScale", focalLengthScale);
+        objectDepthCompute.SetFloat("FocalLengthScale", 1.0f);
 
-                // Calculate physical FOV in radians (for debugging/comparison)
-        float fovRadians = 2.0f * Mathf.Atan((SensorWidthMM/2.0f) / FocalLengthMM);
-        
-        // Pass the focal length in pixels to the compute shader instead of FOV
+        float fovRadians = 2.0f * Mathf.Atan((SensorWidthMM / 2.0f) / FocalLengthMM);
         objectDepthCompute.SetFloat("FOVRadians", fovRadians);
 
-                // Dispatch the shader
         threadGroupsX = Mathf.CeilToInt(OutputWidth / 8.0f);
         threadGroupsY = Mathf.CeilToInt(OutputHeight / 8.0f);
     }
@@ -114,6 +97,7 @@ public class DepthAnythingRunner : DepthEstimationRunner
 #region Model Execution
     public override IEnumerator RunModel(params Texture[] inputs)
     {
+        Debug.Log("DepthAnything RunModel called");
         modelRunning = true;
         if(InputImage != null) InputImage.texture = inputs[0];
         inputTensor = Unity.InferenceEngine.TextureConverter.ToTensor(inputs[0], toTensor);
@@ -121,6 +105,7 @@ public class DepthAnythingRunner : DepthEstimationRunner
         schedule = worker.ScheduleIterable(inputTensor);
 
         yield return RunInference();
+        Debug.Log("DepthAnything RunModel finished");
     }
 
     protected override void PeekOutput()

@@ -12,6 +12,7 @@ public class DepthToggle : MonoBehaviour
     }
     public void OnToggle(bool value)
     {
+        Debug.Log($"DepthToggle.OnToggle called with: {value}, Frame: {Time.frameCount}");Debug.Log($"OnToggle({value}), Frame: {Time.frameCount}\n{System.Environment.StackTrace}");
         if (value)
         {
             depthEstimationRunner.IsEnabled = true;

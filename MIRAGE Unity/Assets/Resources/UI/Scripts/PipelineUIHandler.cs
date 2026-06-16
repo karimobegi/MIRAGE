@@ -193,7 +193,7 @@ public class PipelineUIHandler : MonoBehaviour
         var depthToggle = FindObjectOfType<DepthToggle>();
         depthToggle.transform.parent.GetComponentInChildren<Slider>().value = 0.1f;
         depth = depthToggle.gameObject.GetComponent<Toggle>();
-        depth.isOn = false;
+        depth.isOn = true;
 
         var inpaintingToggle = FindObjectOfType<InpaintingToggle>();
         inpainting = inpaintingToggle.gameObject.GetComponent<Toggle>();
