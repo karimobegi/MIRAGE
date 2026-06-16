@@ -130,15 +130,15 @@ public abstract class CPUPostProcessor : MonoBehaviour, IEffectHandler
         /// <returns></returns>
         protected Vector2 CalculatePositionWithOffset(LabelledSTrack track) {
             var rect = track.getRect();
-            var x = rect.x() * scalingFactorX + Offset.x * scalingFactorX;
-            var y = rect.y() * scalingFactorY + Offset.y * scalingFactorY;
+            var x = (rect.x() + rect.width() / 2f) * scalingFactorX + Offset.x * scalingFactorX;
+            var y = (rect.y() + rect.height() / 2f) * scalingFactorY + Offset.y * scalingFactorY;
             return new Vector2(x, -y);
         }
 
-    protected Vector2 CalculatePosition(LabelledSTrack track) {
+        protected Vector2 CalculatePosition(LabelledSTrack track) {
             var rect = track.getRect();
-            var x = rect.x() * scalingFactorX;
-            var y = rect.y() * scalingFactorY;
+            var x = (rect.x() + rect.width() / 2f) * scalingFactorX;
+            var y = (rect.y() + rect.height() / 2f) * scalingFactorY;
             return new Vector2(x, -y);
         }
 

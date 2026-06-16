@@ -75,9 +75,10 @@ void ObjectDepth (uint3 id : SV_DispatchThreadID, uint3 groupId : SV_GroupID, ui
         
         float depth = DepthBuffer[flippedIndex];
         // Apply depth correction based on distance from center
-        float correction = CalculateDistanceCorrection(int2(x, y));
-        depth *= FocalLengthScale;
-        depth *= correction;
+        // Perspective and focal length corrections disabled since DA3-Small outputs relative depth
+        // float correction = CalculateDistanceCorrection(int2(x, y));
+        // depth *= FocalLengthScale;
+        // depth *= correction;
         
         int objectId = segmentation.x;
         

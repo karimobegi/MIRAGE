@@ -1299,6 +1299,10 @@ PrefabInstance:
       propertyPath: m_IsActive
       value: 1
       objectReference: {fileID: 0}
+    - target: {fileID: 4063595854618415473, guid: 828fc285a4ff36e41a83841d3256046d, type: 3}
+      propertyPath: m_AnchoredPosition.y
+      value: -8.5
+      objectReference: {fileID: 0}
     - target: {fileID: 4088996554306845558, guid: 828fc285a4ff36e41a83841d3256046d, type: 3}
       propertyPath: cursorSpeed
       value: 500
@@ -2129,7 +2133,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 8574407316868394890, guid: 828fc285a4ff36e41a83841d3256046d, type: 3}
       propertyPath: m_AnchoredPosition.y
-      value: 236.2
+      value: -5.3
       objectReference: {fileID: 0}
     - target: {fileID: 8626289241776199122, guid: 828fc285a4ff36e41a83841d3256046d, type: 3}
       propertyPath: m_AnchorMax.y
@@ -2983,7 +2987,7 @@ PrefabInstance:
     - target: {fileID: 5679560247574380171, guid: ab86f2914800cda49b5760ab0fbd7af5, type: 3}
       propertyPath: ModelAsset
       value: 
-      objectReference: {fileID: 5022602860645237092, guid: eb7be34c41db32149bbdedf2a783f4d2, type: 3}
+      objectReference: {fileID: 5022602860645237092, guid: ce078160c2eef4a4096e350ddb30b355, type: 3}
     - target: {fileID: 5679560247574380171, guid: ab86f2914800cda49b5760ab0fbd7af5, type: 3}
       propertyPath: UpdateRate
       value: 0.1

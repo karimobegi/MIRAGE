@@ -281,7 +281,7 @@ VideoPlayer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 91498959}
   m_Enabled: 1
-  m_VideoClip: {fileID: 32900000, guid: b677a926c6fc7884ca25819f1002b858, type: 3}
+  m_VideoClip: {fileID: 32900000, guid: dc542f94e51fe0d4186c7aec57caaa1c, type: 3}
   m_TargetCameraAlpha: 1
   m_TargetCamera3DLayout: 0
   m_TargetCamera: {fileID: 0}
@@ -295,14 +295,12 @@ VideoPlayer:
   m_TimeUpdateMode: 2
   m_PlaybackSpeed: 1
   m_AudioOutputMode: 2
-  m_TargetAudioSources:
-  - {fileID: 0}
-  m_DirectAudioVolumes:
-  - 1
+  m_TargetAudioSources: []
+  m_DirectAudioVolumes: []
   m_Url: 
-  m_EnabledAudioTracks: 01
-  m_DirectAudioMutes: 00
-  m_ControlledAudioTrackCount: 1
+  m_EnabledAudioTracks: 
+  m_DirectAudioMutes: 
+  m_ControlledAudioTrackCount: 0
   m_PlayOnAwake: 1
   m_SkipOnDrop: 1
   m_Looping: 1
@@ -875,7 +873,7 @@ PrefabInstance:
     - target: {fileID: 5679560247574380171, guid: ab86f2914800cda49b5760ab0fbd7af5, type: 3}
       propertyPath: ModelAsset
       value: 
-      objectReference: {fileID: 5022602860645237092, guid: 7bc7d6e7fe8aee643903b3c1f02de67f, type: 3}
+      objectReference: {fileID: 5022602860645237092, guid: cff41ee6e6014904b88b12e7932f1a13, type: 3}
     - target: {fileID: 5679560247574380171, guid: ab86f2914800cda49b5760ab0fbd7af5, type: 3}
       propertyPath: UpdateRate
       value: 0.1
@@ -932,7 +930,7 @@ PrefabInstance:
     - target: {fileID: 1935412686521121079, guid: 9f3ac5ef698223e42b614d76bb999408, type: 3}
       propertyPath: ModelAsset
       value: 
-      objectReference: {fileID: 5022602860645237092, guid: bcdf757193bdfec45a561d04f3babd49, type: 3}
+      objectReference: {fileID: 5022602860645237092, guid: b95a1c5a5eb28d740824473c79be799a, type: 3}
     - target: {fileID: 1935412686521121079, guid: 9f3ac5ef698223e42b614d76bb999408, type: 3}
       propertyPath: ImageHeight
       value: 360
@@ -1787,7 +1785,7 @@ MonoBehaviour:
   _autoStartEnabled: 0
   _autoStartDelay: 2
   _autoStartOnFirstIteration: 1
-  _csvExportEnabled: 0
+  _csvExportEnabled: 1
 --- !u!114 &1862843691 stripped
 MonoBehaviour:
   m_CorrespondingSourceObject: {fileID: 4875789114986273197, guid: b6d05cc60869cb74baa41bc16c6ddc11, type: 3}
@@ -2262,7 +2260,7 @@ PrefabInstance:
     - target: {fileID: 4472163729129746862, guid: 4ffc797f9536ffc42abd599f1a4196ce, type: 3}
       propertyPath: ModelAsset
       value: 
-      objectReference: {fileID: 5022602860645237092, guid: 574fe89fff5d27248baa7b8fb9a1cd5e, type: 3}
+      objectReference: {fileID: 5022602860645237092, guid: c7d772712250883449beb2898faa72de, type: 3}
     - target: {fileID: 4472163729129746862, guid: 4ffc797f9536ffc42abd599f1a4196ce, type: 3}
       propertyPath: OutputImage
       value: 

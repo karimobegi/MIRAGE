@@ -72,7 +72,7 @@ public class DepthAnythingRunner : DepthEstimationRunner
         // Explicitly slice all 4 dims — two dots for the two leading dims (batch, channel)
         var slicedOutput = output[.., .., 0..InputHeight, 0..InputWidth];
 
-        // DA3 outputs metric depth — normalize for display only
+        // DA3 outputs relative depth — normalize for display only
         var depthTexture = slicedOutput / 4f;
             
         runtimeModel = graph.Compile(slicedOutput, depthTexture);
@@ -97,7 +97,6 @@ public class DepthAnythingRunner : DepthEstimationRunner
 #region Model Execution
     public override IEnumerator RunModel(params Texture[] inputs)
     {
-        Debug.Log("DepthAnything RunModel called");
         modelRunning = true;
         if(InputImage != null) InputImage.texture = inputs[0];
         inputTensor = Unity.InferenceEngine.TextureConverter.ToTensor(inputs[0], toTensor);
@@ -105,7 +104,6 @@ public class DepthAnythingRunner : DepthEstimationRunner
         schedule = worker.ScheduleIterable(inputTensor);
 
         yield return RunInference();
-        Debug.Log("DepthAnything RunModel finished");
     }
 
     protected override void PeekOutput()
