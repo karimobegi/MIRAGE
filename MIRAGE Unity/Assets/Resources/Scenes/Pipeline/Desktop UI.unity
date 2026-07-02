@@ -2030,7 +2030,7 @@ PrefabInstance:
     - target: {fileID: 8190289218925051257, guid: 828fc285a4ff36e41a83841d3256046d, type: 3}
       propertyPath: ModelRunner
       value: 
-      objectReference: {fileID: 1401033970}
+      objectReference: {fileID: 0}
     - target: {fileID: 8233918760816580176, guid: 828fc285a4ff36e41a83841d3256046d, type: 3}
       propertyPath: m_AnchorMax.y
       value: 0
@@ -2442,7 +2442,7 @@ VideoPlayer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 91498959}
   m_Enabled: 1
-  m_VideoClip: {fileID: 32900000, guid: dc542f94e51fe0d4186c7aec57caaa1c, type: 3}
+  m_VideoClip: {fileID: 32900000, guid: 23028c88c3db1d54bbd0f266424fdd60, type: 3}
   m_TargetCameraAlpha: 1
   m_TargetCamera3DLayout: 0
   m_TargetCamera: {fileID: 0}
@@ -2456,12 +2456,14 @@ VideoPlayer:
   m_TimeUpdateMode: 2
   m_PlaybackSpeed: 1
   m_AudioOutputMode: 2
-  m_TargetAudioSources: []
-  m_DirectAudioVolumes: []
+  m_TargetAudioSources:
+  - {fileID: 0}
+  m_DirectAudioVolumes:
+  - 1
   m_Url: 
-  m_EnabledAudioTracks: 
-  m_DirectAudioMutes: 
-  m_ControlledAudioTrackCount: 0
+  m_EnabledAudioTracks: 01
+  m_DirectAudioMutes: 00
+  m_ControlledAudioTrackCount: 1
   m_PlayOnAwake: 1
   m_SkipOnDrop: 1
   m_Looping: 0
@@ -3034,6 +3036,10 @@ PrefabInstance:
       value: 
       objectReference: {fileID: 975602916}
     - target: {fileID: 1935412686521121079, guid: 9f3ac5ef698223e42b614d76bb999408, type: 3}
+      propertyPath: m_Enabled
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 1935412686521121079, guid: 9f3ac5ef698223e42b614d76bb999408, type: 3}
       propertyPath: ImageWidth
       value: 640
       objectReference: {fileID: 0}
@@ -3073,6 +3079,26 @@ PrefabInstance:
       propertyPath: SelectedClasses.Array.data[0].MaxRange
       value: 200
       objectReference: {fileID: 0}
+    - target: {fileID: 3331162399830577427, guid: 9f3ac5ef698223e42b614d76bb999408, type: 3}
+      propertyPath: MaskImage
+      value: 
+      objectReference: {fileID: 975602916}
+    - target: {fileID: 3331162399830577427, guid: 9f3ac5ef698223e42b614d76bb999408, type: 3}
+      propertyPath: m_Enabled
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 3331162399830577427, guid: 9f3ac5ef698223e42b614d76bb999408, type: 3}
+      propertyPath: ModelAsset
+      value: 
+      objectReference: {fileID: 5022602860645237092, guid: c749edace8a30554680505d80db9dd3b, type: 3}
+    - target: {fileID: 3331162399830577427, guid: 9f3ac5ef698223e42b614d76bb999408, type: 3}
+      propertyPath: OutputImage
+      value: 
+      objectReference: {fileID: 1813419643}
+    - target: {fileID: 3331162399830577427, guid: 9f3ac5ef698223e42b614d76bb999408, type: 3}
+      propertyPath: DebugOutputImage
+      value: 
+      objectReference: {fileID: 1665799927}
     - target: {fileID: 5214784420172681137, guid: 9f3ac5ef698223e42b614d76bb999408, type: 3}
       propertyPath: m_LocalPosition.x
       value: 0
@@ -3121,10 +3147,15 @@ PrefabInstance:
       propertyPath: m_IsActive
       value: 1
       objectReference: {fileID: 0}
-    m_RemovedComponents: []
+    m_RemovedComponents:
+    - {fileID: 3331162399830577427, guid: 9f3ac5ef698223e42b614d76bb999408, type: 3}
+    - {fileID: 1935412686521121079, guid: 9f3ac5ef698223e42b614d76bb999408, type: 3}
     m_RemovedGameObjects: []
     m_AddedGameObjects: []
-    m_AddedComponents: []
+    m_AddedComponents:
+    - targetCorrespondingSourceObject: {fileID: 5690440486267950348, guid: 9f3ac5ef698223e42b614d76bb999408, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 1624790614}
   m_SourcePrefab: {fileID: 100100000, guid: 9f3ac5ef698223e42b614d76bb999408, type: 3}
 --- !u!224 &622555583 stripped
 RectTransform:
@@ -3484,17 +3515,6 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: f4688fdb7df04437aeb418b961361dc5, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
---- !u!114 &1401033970 stripped
-MonoBehaviour:
-  m_CorrespondingSourceObject: {fileID: 1935412686521121079, guid: 9f3ac5ef698223e42b614d76bb999408, type: 3}
-  m_PrefabInstance: {fileID: 608559006}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 0}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 8f863c3b1b10e224f87cde34234cf5b9, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
 --- !u!1 &1538772762
 GameObject:
   m_ObjectHideFlags: 0
@@ -3704,6 +3724,37 @@ CanvasRenderer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1613398519}
   m_CullTransparentMesh: 1
+--- !u!1 &1624790613 stripped
+GameObject:
+  m_CorrespondingSourceObject: {fileID: 5690440486267950348, guid: 9f3ac5ef698223e42b614d76bb999408, type: 3}
+  m_PrefabInstance: {fileID: 608559006}
+  m_PrefabAsset: {fileID: 0}
+--- !u!114 &1624790614
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1624790613}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 32a3bcfa53735b54aaa20f34859653b9, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::HINTRunner
+  IsEnabled: 1
+  ModelAsset: {fileID: 5022602860645237092, guid: c749edace8a30554680505d80db9dd3b, type: 3}
+  UpdateRate: 1
+  MaxObjects: 256
+  OutputImage: {fileID: 1813419643}
+  ImageWidth: 640
+  ImageHeight: 360
+  InputWidth: 256
+  InputHeight: 256
+  OutputWidth: 256
+  OutputHeight: 256
+  SelectedClasses: []
+  MaskImage: {fileID: 975602916}
+  DebugOutputImage: {fileID: 1665799927}
 --- !u!1 &1665799925
 GameObject:
   m_ObjectHideFlags: 0

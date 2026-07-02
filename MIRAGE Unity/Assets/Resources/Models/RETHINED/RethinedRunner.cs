@@ -10,26 +10,11 @@ using UnityEngine;
 using UnityEngine.UI;
 
 
-/// <summary>
-/// MI-GAN is an Inpainting models that uses a GAN to inpaint images
-/// https://github.com/Picsart-AI-Research/MI-GAN/
-/// 
-/// To export the model to ONNX, we modified the original script. See the repository for detailed instructions.
-/// 
-/// 
-/// Setup: 
-/// The IMAGE Width & Height must match the Output Dimensions of the Segmentation Model.
-/// 
-/// The INPUT Width & Height need to match the model input dimensions. For MI-GAN, this is 512x512.
-/// 
-/// 
-/// Author: J-Britten
-/// </summary>
-public class MIGANRunner : InpaintingRunner, IEffectHandler
+
+public class RETHINEDRunner : InpaintingRunner, IEffectHandler
 {   
 
 #region Variables
-
 
     public EffectType EffectType => EffectType.Inpainting;
 
@@ -38,12 +23,10 @@ public class MIGANRunner : InpaintingRunner, IEffectHandler
     /// </summary>
     public InpaintingSetting[] SelectedClasses;
 
-
     private InpaintingSettingStruct[] selectedClassesStructs = new InpaintingSettingStruct[] { };
 
     public RawImage MaskImage;
     public RawImage DebugOutputImage;
-
 
     private Unity.InferenceEngine.TextureTransform imgTransform, maskTransform;
 
@@ -71,8 +54,8 @@ public class MIGANRunner : InpaintingRunner, IEffectHandler
 #region Model Preparation
     protected override void PrepareModel()
     {
-        imgTransform = new TextureTransform().SetDimensions(InputWidth,InputHeight,3);
-        maskTransform = new TextureTransform().SetDimensions(InputWidth,InputHeight,1);
+        imgTransform = new TextureTransform().SetDimensions(InputWidth, InputHeight, 3);
+        maskTransform = new TextureTransform().SetDimensions(InputWidth, InputHeight, 1);
 
         PreparePreProcessing();
 
@@ -82,27 +65,24 @@ public class MIGANRunner : InpaintingRunner, IEffectHandler
 
         var inputImg = graph.AddInput(Unity.InferenceEngine.DataType.Float, new Unity.InferenceEngine.DynamicTensorShape(1, 3, -1, -1));
         var inputMsk = graph.AddInput(Unity.InferenceEngine.DataType.Float, new Unity.InferenceEngine.DynamicTensorShape(1, 1, -1, -1));
-        
 
-        inputMsk = Unity.InferenceEngine.Functional.Interpolate(inputMsk, new int[] {InputHeight, InputWidth}, mode: "nearest");
-        //var sliced = inputMsk[..,0,..,..];
+        inputMsk = Unity.InferenceEngine.Functional.Interpolate(inputMsk, new int[] { InputHeight, InputWidth }, mode: "nearest");
         var ceil = Unity.InferenceEngine.Functional.Ceil(inputMsk);
-        
-        ceil = 1 - ceil;
-       // ceil = Functional.MaxPool2D(ceil, 5, 1, 2);
 
+        // RETHINED expects 1 = missing, 0 = known — no inversion needed
+        // Pre-masking is handled inside the ONNX wrapper
         var outputs = Unity.InferenceEngine.Functional.Forward(model, inputImg, ceil);
         var op = outputs[0];
-        
+
         op = op * inputMsk;
 
-        var alpha = Unity.InferenceEngine.Functional.Concat(new[] {op, inputMsk}, 1);
+        var alpha = Unity.InferenceEngine.Functional.Concat(new[] { op, inputMsk }, 1);
         runtimeModel = graph.Compile(alpha, ceil);
-        
+
         // Initialize output textures once to avoid recreating them every frame
         PrepareOutputTextures();
     }
-    
+
     private void PrepareOutputTextures()
     {
         // Create output texture with proper format and size
@@ -110,7 +90,7 @@ public class MIGANRunner : InpaintingRunner, IEffectHandler
         outputTexture = new RenderTexture(OutputWidth, OutputHeight, 0, RenderTextureFormat.ARGB32);
         outputTexture.enableRandomWrite = true;
         outputTexture.Create();
-        
+
         // Create mask output texture
         if (maskOutputTexture != null) maskOutputTexture.Release();
         maskOutputTexture = new RenderTexture(OutputWidth, OutputHeight, 0, RenderTextureFormat.R8);
@@ -118,8 +98,8 @@ public class MIGANRunner : InpaintingRunner, IEffectHandler
         maskOutputTexture.Create();
     }
 
-    private void PreparePreProcessing() {
-
+    private void PreparePreProcessing()
+    {
         objectValidator = Resources.Load<ComputeShader>("Models/MI-GAN/ObjectValidator");
         createMaskShader = Resources.Load<ComputeShader>("Models/MI-GAN/CreateMask");
         objectValidatorKernel = objectValidator.FindKernel("ValidateObjects");
@@ -130,34 +110,36 @@ public class MIGANRunner : InpaintingRunner, IEffectHandler
         inputMaskTensor = new Unity.InferenceEngine.Tensor<float>(new Unity.InferenceEngine.TensorShape(1, 1, ImageHeight, ImageWidth));
 
         createMaskKernel = createMaskShader.FindKernel("CreateMask");
-        
+
         createMaskThreadGroups = Mathf.CeilToInt((ImageWidth * ImageHeight) / 64f);
         createMaskShader.SetBuffer(createMaskKernel, "ValidObjects", validObjectsBuffer);
         createMaskShader.SetBuffer(createMaskKernel, "MaskBuffer", Unity.InferenceEngine.ComputeTensorData.Pin(inputMaskTensor).buffer);
-        createMaskShader.SetInt("NumMaskPositions", ImageWidth * ImageHeight); //ensures we dont go out of bounds
+        createMaskShader.SetInt("NumMaskPositions", ImageWidth * ImageHeight);
     }
 
-    public void UpdateClasses() {
-        if(SelectedClasses.Length == 0) { //ensure we dont crash
-            selectedClassesStructs = new InpaintingSettingStruct[] {new InpaintingSetting(-2, 0, 100).ToStruct()};
-        } else {
+    public void UpdateClasses()
+    {
+        if (SelectedClasses == null || SelectedClasses.Length == 0)
+        {
+            selectedClassesStructs = new InpaintingSettingStruct[] { new InpaintingSetting(-2, 0, 100).ToStruct() };
+        }
+        else
+        {
             selectedClassesStructs = SelectedClasses.Select(x => x.ToStruct()).ToArray();
         }
 
-        if(settingsBuffer != null) settingsBuffer.Release();
+        if (settingsBuffer != null) settingsBuffer.Release();
 
-
-        
         settingsBuffer = new ComputeBuffer(selectedClassesStructs.Length, sizeof(int) + sizeof(float) * 2);
         settingsBuffer.SetData(selectedClassesStructs);
         objectValidator.SetBuffer(objectValidatorKernel, "SelectedClasses", settingsBuffer);
         objectValidator.SetInt("NumSelectedClasses", selectedClassesStructs.Length);
     }
+
     public void UpdateClasses(List<EffectSetting> classes)
     {
-       SelectedClasses = classes.Cast<InpaintingSetting>().ToArray();
-
-       UpdateClasses();
+        SelectedClasses = classes.Cast<InpaintingSetting>().ToArray();
+        UpdateClasses();
     }
 
 #endregion
@@ -169,12 +151,13 @@ public class MIGANRunner : InpaintingRunner, IEffectHandler
 
     public override IEnumerator RunModel(Texture input, YOLOSegmentationRunner yolo, ComputeBuffer depthBuffer)
     {
-        if(yolo.NumObjDetected == 0) yield break;
+        if (yolo.NumObjDetected == 0) yield break;
+
         // Run object validator first
         objectValidator.SetBuffer(objectValidatorKernel, "ClassIds", yolo.ClassIdsBuffer);
         objectValidator.SetBuffer(objectValidatorKernel, "DepthBuffer", depthBuffer);
         objectValidator.SetInt("NumObjects", yolo.NumObjDetected);
-        
+
         int threadGroups = Mathf.CeilToInt(yolo.NumObjDetected / 64f);
         objectValidator.Dispatch(objectValidatorKernel, threadGroups, 1, 1);
 
@@ -188,7 +171,6 @@ public class MIGANRunner : InpaintingRunner, IEffectHandler
         yield return RunInference();
     }
 
-
     /// <summary>
     /// Basic run model without any additional filtering
     /// </summary>
@@ -196,11 +178,8 @@ public class MIGANRunner : InpaintingRunner, IEffectHandler
     /// <returns></returns>
     public override IEnumerator RunModel(params Texture[] inputs)
     {
-       // if( inputMaskTensor != null) inputMaskTensor.Dispose();
-       
         inputTensor = Unity.InferenceEngine.TextureConverter.ToTensor(inputs[0], imgTransform);
         inputMaskTensor = Unity.InferenceEngine.TextureConverter.ToTensor(inputs[1], maskTransform);
-
 
         schedule = worker.ScheduleIterable(inputTensor, inputMaskTensor);
 
@@ -212,7 +191,7 @@ public class MIGANRunner : InpaintingRunner, IEffectHandler
         return outputTensor.IsReadbackRequestDone();
     }
 
-   protected override void PeekOutput()
+    protected override void PeekOutput()
     {
         outputTensor = worker.PeekOutput(0) as Unity.InferenceEngine.Tensor<float>;
         outputTensor.ReadbackRequest();
@@ -220,19 +199,20 @@ public class MIGANRunner : InpaintingRunner, IEffectHandler
 
     protected override void ReadOutput()
     {
-        
         // Use new RenderToTexture API with pre-created textures
         var outputTransform = new TextureTransform();
         Unity.InferenceEngine.TextureConverter.RenderToTexture(outputTensor, outputTexture, outputTransform);
-        
-        if(MaskImage != null) {
+
+        if (MaskImage != null)
+        {
             var maskTransform = new TextureTransform();
             Unity.InferenceEngine.TextureConverter.RenderToTexture(inputMaskTensor, maskOutputTexture, maskTransform);
             MaskImage.texture = maskOutputTexture;
         }
 
-       if(DebugOutputImage != null) {
-           DebugOutputImage.texture = outputTexture;
+        if (DebugOutputImage != null)
+        {
+            DebugOutputImage.texture = outputTexture;
         }
         UpdateOutputImage();
         DisposeOutput();
@@ -241,18 +221,17 @@ public class MIGANRunner : InpaintingRunner, IEffectHandler
 #endregion
     public override void DisposeOutput()
     {
-        if( outputTensor != null) outputTensor.Dispose();
-        if( inputTensor != null) inputTensor.Dispose(); 
+        if (outputTensor != null) outputTensor.Dispose();
+        if (inputTensor != null) inputTensor.Dispose();
     }
+
     void OnDestroy()
     {
         DisposeOutput();
-        if (inputMaskTensor != null) inputMaskTensor.Dispose();
-        if(worker != null) worker.Dispose();
+        if (worker != null) worker.Dispose();
         if (outputTexture != null) outputTexture.Release();
         if (maskOutputTexture != null) maskOutputTexture.Release();
-
-        if( validObjectsBuffer != null) validObjectsBuffer.Release();
-        if( settingsBuffer != null) settingsBuffer.Release();
-    }    
+        if (validObjectsBuffer != null) validObjectsBuffer.Release();
+        if (settingsBuffer != null) settingsBuffer.Release();
+    }
 }

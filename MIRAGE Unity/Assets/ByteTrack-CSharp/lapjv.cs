@@ -4,11 +4,6 @@ using System.Runtime.InteropServices;
 namespace ByteTrackCSharp{
 internal class lapjv
 {
-    [DllImport("msvcrt.dll",
-        EntryPoint = "memset",
-        CallingConvention = CallingConvention.Cdecl,
-        SetLastError = false)]
-    public static extern IntPtr MemSet(IntPtr dest, int c, int count);
 
     const int LARGE = 1000000;
 
@@ -64,7 +59,7 @@ internal class lapjv
             return -1;
 
 
-        MemSet((nint)unique, 1, n);
+        for (int i = 0; i < n; i++) unique[i] = true;
         {
             int j = n;
             do

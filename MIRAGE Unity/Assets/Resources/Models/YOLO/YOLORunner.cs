@@ -5,8 +5,6 @@ using System.Linq;
 using Unity.Collections;
 using Unity.InferenceEngine;
 using Unity.VisualScripting;
-using UnityEditor.EditorTools;
-using UnityEditor.Experimental.GraphView;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -435,6 +433,10 @@ public class YOLOSegmentationRunner : SegmentationRunner
         if (inputTensor != null) inputTensor.Dispose();
         if (bboxTensor != null) bboxTensor.Dispose();
         if (maskTensor != null) maskTensor.Dispose();
+        if (bboxOutputBuffer != null)
+        {
+            bboxOutputBuffer.Dispose();
+        }
         if (OutputBuffer != null)
         {
             OutputBuffer.Dispose();
