@@ -2,6 +2,7 @@
   "dependencies": {
     "com.github-glitchenzo.nugetforunity": "https://github.com/GlitchEnzo/NuGetForUnity.git?path=/src/NuGetForUnity",
     "com.judahperez.hsvcolorpicker": "3.3.0",
+    "com.meta.xr.mrutilitykit": "85.0.0",
     "com.unity.2d.sprite": "1.0.0",
     "com.unity.ai.inference": "2.2.1",
     "com.unity.collab-proxy": "2.8.2",
@@ -19,7 +20,6 @@
     "com.unity.uiextensions": "2.3.3-pre.1",
     "com.unity.visualscripting": "1.9.7",
     "com.unity.xr.interaction.toolkit": "3.2.1",
-    "com.unity.xr.oculus": "4.5.1",
     "com.unity.xr.openxr": "1.15.1",
     "com.unity.modules.accessibility": "1.0.0",
     "com.unity.modules.ai": "1.0.0",

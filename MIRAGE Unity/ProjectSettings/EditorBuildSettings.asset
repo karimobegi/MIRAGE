@@ -6,12 +6,15 @@ EditorBuildSettings:
   serializedVersion: 2
   m_Scenes:
   - enabled: 1
+    path: Assets/Resources/Scenes/Pipeline/Standalone.unity
+    guid: d4b3b5a9cd3947f4cb75d409c9834e44
+  - enabled: 0
     path: Assets/Resources/Scenes/Pipeline/Benchmarks/BenchmarkAutomation.unity
     guid: 7590f9a69bbc243a9be0b0d132d30808
-  - enabled: 1
+  - enabled: 0
     path: Assets/Resources/Scenes/Pipeline/Benchmarks/Desktop Benchmark.unity
     guid: 221122b19a0c24328a269f3afd0de549
-  - enabled: 1
+  - enabled: 0
     path: Assets/Resources/Scenes/Pipeline/Benchmarks/VR Benchmark.unity
     guid: cf4707946d77c44519de7ba3fa8ccf47
   m_configObjects:
