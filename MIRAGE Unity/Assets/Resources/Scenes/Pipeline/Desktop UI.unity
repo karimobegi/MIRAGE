@@ -3739,20 +3739,20 @@ MonoBehaviour:
   m_GameObject: {fileID: 1624790613}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 32a3bcfa53735b54aaa20f34859653b9, type: 3}
+  m_Script: {fileID: 11500000, guid: 8f863c3b1b10e224f87cde34234cf5b9, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::HINTRunner
+  m_EditorClassIdentifier: Assembly-CSharp::MIGANRunner
   IsEnabled: 1
-  ModelAsset: {fileID: 5022602860645237092, guid: c749edace8a30554680505d80db9dd3b, type: 3}
+  ModelAsset: {fileID: 5022602860645237092, guid: b95a1c5a5eb28d740824473c79be799a, type: 3}
   UpdateRate: 1
   MaxObjects: 256
   OutputImage: {fileID: 1813419643}
   ImageWidth: 640
   ImageHeight: 360
-  InputWidth: 256
-  InputHeight: 256
-  OutputWidth: 256
-  OutputHeight: 256
+  InputWidth: 512
+  InputHeight: 512
+  OutputWidth: 512
+  OutputHeight: 512
   SelectedClasses: []
   MaskImage: {fileID: 975602916}
   DebugOutputImage: {fileID: 1665799927}
