@@ -37,7 +37,7 @@ We use [YOLO26-seg](https://github.com/ultralytics/ultralytics) for Object Detec
 from ultralytics import YOLO
 
 model = YOLO("yolo26s-seg.pt")
-model.export(format="onnx", end2end = False)
+model.export(format="onnx")
 ```
 For more detailed instructions, please refer to the [Official Documentation](https://docs.ultralytics.com/tasks/segment/)
 
@@ -101,6 +101,33 @@ We use the [MI-GAN](https://github.com/Picsart-AI-Research/MI-GAN) Inpainting Mo
 5. Testing:
     - As multiple objects that need accurate placements are involved, getting it to `look right` may require some trial and error.
     - If no changes are made to the in-vehicle setup, this only has to be done once. Make sure to document the adjustments you made 
+
+### Preparing the Standalone Scene for Quest 3
+The `Standalone` scene runs MIRAGE as a standalone Android app on the Meta Quest 3, using the Passthrough Camera API (PCA) instead of an external webcam.
+ 
+#### Prerequisites
+- Meta Quest 3 with Developer Mode enabled (via Meta Quest mobile app)
+- USB-C data cable (not charge-only)
+- Android SDK, NDK, and JDK installed through Unity Hub
+#### Build Settings
+1. Switch platform to Android: `File > Build Settings > Android > Switch Platform`
+2. Configure Player Settings under `Other Settings`:
+   - Minimum API Level: 32
+   - Scripting Backend: IL2CPP
+   - Target Architecture: ARM64 only
+   - Graphics API: Vulkan only
+   - Allow 'unsafe' Code: enabled
+3. Under `Edit > Project Settings > Meta XR`, fix all required items (passthrough support, headset camera permission, splash screen)
+#### Deploying to Quest 3
+1. Connect the Quest 3 via USB-C
+2. Accept the "Allow USB debugging" prompt in the headset
+3. Verify connection: run `adb devices` from the Android SDK platform-tools directory
+4. In Unity: `File > Build and Run` with the `Standalone` scene at index 0
+#### Technical Notes
+- The PCA captures frames at 1280×960 with 20-40ms capture latency
+- YOLO must be exported with `end2end = True` to avoid GPU compute buffer limits on the Quest 3's Adreno GPU (128MB max per buffer)
+- Detection count is capped at 25 to keep mask processing within GPU memory limits
+- The Meta Horizon PC app must be installed on the build machine for USB driver support
 
 ### UI Controls
 - Keyboard: Mouse or Arrow Keys, Enter/Space, ESC
