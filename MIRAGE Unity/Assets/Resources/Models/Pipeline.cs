@@ -48,8 +48,14 @@ public class Pipeline : MonoBehaviour
        InitializePipeline();
     }
 
-    void Start()
+    IEnumerator Start()
     {
+        // Wait for CameraInput to be ready (PCA takes a few seconds on Quest 3)
+        while (CameraInput.Instance == null || CameraInput.Instance.CurrentFrame == null)
+        {
+            yield return null;
+        }
+
         if (RunAsSequence)
         {
             benchmarkManager.SetParallelMode(false);

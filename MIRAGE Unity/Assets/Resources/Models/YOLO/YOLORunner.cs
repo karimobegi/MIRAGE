@@ -30,6 +30,10 @@ using UnityEngine.UI;
 /// 4. Since the mask is 1/4th of the size of the input, we upscale the mask to the Output dimensions.
 /// 5. Depending on whether the aspect ratio matches the input image aspect ratio or the model input aspect ratio, we either clip the padding or not
 /// 6. This allows us to either continue calculating with the padded square output or with the image in its original aspect ratio
+///
+/// NOTE: This runner targets a YOLO26 model exported with end2end=True. The model performs NMS
+/// internally and outputs a fixed set of 300 final detections (sorted by confidence, score-padded),
+/// so no Functional.NMS() step or iouThreshold is needed on this side anymore.
 /// Author: J-Britten
 /// 
 /// </summary>
@@ -48,19 +52,13 @@ public class YOLOSegmentationRunner : SegmentationRunner
     public bool ClipPadding = true;
 
     public int YOLOClasses = 80; //replace this with count from text asset later labels
-    
-    /// <summary>
-    /// Intersection Over Union (IoU) threshold for Non-Maximum Suppression (NMS). 
-    /// Lower values result in fewer detections by eliminating overlapping boxes, useful for reducing duplicates.
-    /// </summary>
-    public float iouThreshold = 0.7f;
-    
+
     /// <summary>
     /// Sets the minimum confidence threshold for detections. 
     /// Objects detected with confidence below this threshold will be disregarded. 
     /// Adjusting this value can help reduce false positives.
     /// </summary>
-    public float scoreThreshold = 0.25f;
+    public float scoreThreshold = 0.4f;
 
     /// <summary>
     /// Threshold for the mask values. Default: 0.25
@@ -166,14 +164,17 @@ public class YOLOSegmentationRunner : SegmentationRunner
         && scoresTensor.IsReadbackRequestDone();
     }
 
-    protected override void PeekOutput() {
+    protected override void PeekOutput()
+    {
+        // Output names and types are the same as before
+        labelIDTensor = worker.PeekOutput("output_0") as Tensor<int>;   // [300]
+        scoresTensor = worker.PeekOutput("output_1") as Tensor<float>;  // [300]
+        bboxTensor = worker.PeekOutput("output_2") as Tensor<float>;    // [300, 4] (cxcywh)
+        maskTensor = worker.PeekOutput("output_3") as Tensor<float>;    // [300, OutputH, OutputW]
 
-        labelIDTensor = worker.PeekOutput("output_0") as Tensor<int>; // N, 1 (label IDs)
-        scoresTensor = worker.PeekOutput("output_1") as Tensor<float>; // N, 1 (scores)
-        bboxTensor = worker.PeekOutput("output_2") as Tensor<float>; // N, 4 (coords are centerX, centerY, width, height)
-        maskTensor = worker.PeekOutput("output_3") as Tensor<float>;  // N , 160, 160 ,1      (160,160) by default, adjusted to output width and height for this
-
+        // Cap at MaxObjects (same as before)
         numDetections = Math.Min(labelIDTensor.shape[0], MaxObjects);
+
         labelIDTensor.ReadbackRequest();
         scoresTensor.ReadbackRequest();
         bboxTensor.ReadbackRequest();
@@ -187,6 +188,19 @@ public class YOLOSegmentationRunner : SegmentationRunner
         }*/
         CreateInstanceSegmentationMask();
         TransferDataToCPU();
+
+        // Filter by score threshold — end2end model outputs 300 detections
+        // sorted by confidence, with zero-padded slots at the end.
+        // Count only detections above the score threshold.
+        int validDetections = 0;
+        for (int i = 0; i < numDetections; i++)
+        {
+            if (scoresData[i] >= scoreThreshold)
+                validDetections++;
+            else
+                break; // sorted by confidence, so we can stop early
+        }
+        numDetections = validDetections;
 
         // Clean up tensors immediately
         inputTensor.Dispose();
@@ -213,14 +227,6 @@ public class YOLOSegmentationRunner : SegmentationRunner
         var pad_h_scaled = Mathf.RoundToInt(pad_h / MaskScalingFactor);
         var pad_w_scaled = Mathf.RoundToInt(pad_w / MaskScalingFactor);
 
-        var ctoC = Functional.Constant(new TensorShape(4,4),new float[] //center to corners matrix
-        {
-                    1,      0,      1,      0,
-                    0,      1,      0,      1,
-                    -0.5f,  0,      0.5f,   0,
-                    0,      -0.5f,  0,      0.5f
-        });
-
         var model = ModelLoader.Load(ModelAsset); //Load YOLO model
         var graph = new FunctionalGraph();
         //var input = graph.AddInput(model, 0); //get input tensor from original model
@@ -231,39 +237,54 @@ public class YOLOSegmentationRunner : SegmentationRunner
         //no preprocessing needed
         var outputs = Functional.Forward(model, input);
 
-        var boxes_scores = outputs[0]; //shape (1, 116, 8400) by default, the number is changing depending on the number of classes the yolo model has
+        // With end2end=True, YOLO26 outputs:
+        //   outputs[0]: [1, 300, 38] — detections [xyxy(4), score(1), classID(1), mask_coefs(32)]
+        //   outputs[1]: [1, 32, H, W] — proto masks (unchanged from before)
+        var detections = outputs[0][0]; // [300, 38] — squeeze batch dim
+        detections = detections[0..25]; // Only keep top 50 detections
+        var maskPrototypes = outputs[1]; // [1, 32, H, W]
+        // --- Extract detection components ---
 
-        var classUpper = 4 + YOLOClasses; //upper bounds for tensor creation below, by default YOLO has 80 classes, so it would be 84
-        var boxCoords = boxes_scores[0, 0..4, ..];  //The first 4 elements are the box coordinates, shape (4, 8400)
-        boxCoords = Functional.Transpose(boxCoords, 0,1); //Transpose to shape (8400, 4)
-        var allScores = boxes_scores[0, 4..classUpper, ..]; //The next 80 elements are the class scores, shape ( 80, 8400)
-        var scores = Functional.ReduceMax(allScores, 0); //Reduce to shape (8400)
-        var classIDs = Functional.ArgMax(allScores, 0); //Reduce to shape (8400)
+        // Bounding boxes: convert xyxy → cxcywh to match compute shader expectations
+        var x1 = detections[.., 0..1]; // [300, 1]
+        var y1 = detections[.., 1..2]; // [300, 1]
+        var x2 = detections[.., 2..3]; // [300, 1]
+        var y2 = detections[.., 3..4]; // [300, 1]
+        var half = Functional.Constant(0.5f);
+        var cx = Functional.Mul(Functional.Add(x1, x2), half); // (x1 + x2) / 2
+        var cy = Functional.Mul(Functional.Add(y1, y2), half); // (y1 + y2) / 2
+        var w = Functional.Sub(x2, x1);
+        var h = Functional.Sub(y2, y1);
+        var boxCoords = Functional.Concat(new FunctionalTensor[] {cx, cy, w, h}, -1); // [300, 4]
 
-        var boxCorners = Functional.MatMul(boxCoords, ctoC); //Transform the box coordinates to corners
-        
-        var indices = Functional.NMS(boxCorners, scores, iouThreshold, scoreThreshold); //iou threshold, score threshold //shape = N (the amount of objects that meet the threshold criteria)
-        var indices_unsqueezed = Functional.Unsqueeze(indices, -1); // N
-        var indices_2 = Functional.BroadcastTo(indices_unsqueezed, new int[] {4}); // N, 4
-        var coords = Functional.Gather(boxCoords, 0, indices_2); //N, 4
+        // Scores and class IDs
+        var scores = detections[.., 4]; // [300]
+        var classIDs = detections[.., 5]; // [300] as float
+        var labelIDs = Functional.Int(classIDs); // [300] cast to int
 
-        var labelIDs = Functional.Gather(classIDs, 0, indices); //N, ids for labels
-        var usedScores = Functional.Gather(scores, 0, indices); //N, all relevant scores
+        // Mask coefficients
+        var mask_coefs = detections[.., 6..38]; // [300, 32]
 
-        var mask_coefs = boxes_scores[0, classUpper.., ..]; //shape (1, 32, 8400)
-        mask_coefs = Functional.Transpose(mask_coefs, 0,1); //shape (8400, 32)
+        var maskPrototypesForMul = maskPrototypes; //shape (1, 32, H, W)
 
-        var indices_3 = Functional.BroadcastTo(indices_unsqueezed, new int[] {32}); // N, 32
-        mask_coefs = Functional.Gather(mask_coefs, 0, indices_3); //shape (N, 32)
-       // mask_coefs = Functional.Gather(mask_coefs, 1, indices); //shape (1, 32, N)
-
-        var maskPrototypes = outputs[1]; //shape (1, 32, 160, 160) //consider turning this into shape N, 32, 160, 160 then apply multiplication accordingly
+        // --- Process masks (same pipeline as before, no changes) ---
 
         var coefs = Functional.Reshape(mask_coefs, new int[] {-1, 32,1,1}); //reshape coefficients to match match prototype for multiplication, -1 = N
-        var masks = Functional.Mul(coefs, maskPrototypes); //for each result, multiply the coefficients with the prototype on their respective mask layer
+        var masks = Functional.Mul(coefs, maskPrototypesForMul); //for each result, multiply the coefficients with the prototype on their respective mask layer
         
-        masks = Functional.ReduceSum(masks,1);    //shape (N, 160, 160)
 
+        masks = Functional.ReduceSum(masks, 1); // [300, H, W]
+
+        // Zero out masks for invalid detections by applying a large negative bias
+        // so sigmoid produces ~0 instead of 0.5 for zero-padded detections
+        var scoreBool = Functional.Greater(scores, Functional.Constant(scoreThreshold)); // [300]
+        var scoreFloat = Functional.Where(scoreBool, Functional.Constant(1.0f), Functional.Constant(0.0f));
+        var invalidMask = Functional.Sub(Functional.Constant(1.0f), scoreFloat); // [300] — 0.0 valid, 1.0 invalid
+        invalidMask = Functional.Unsqueeze(Functional.Unsqueeze(invalidMask, 1), 2); // [300, 1, 1]
+        var bias = Functional.Mul(invalidMask, Functional.Constant(-100.0f)); // [300, 1, 1]
+        masks = Functional.Add(masks, bias); // invalid masks become very negative
+
+        // Continue with upscaling...
         //The following section takes care of upscaling the masks to the original image size
         FunctionalTensor upscalingTensor = Functional.Constant(0.0f); //Create a tensor of zeros
         upscalingTensor = Functional.BroadcastTo(upscalingTensor, new int[] {1,internalMaskHeight,internalMaskWidth}); //Give it the same shape as a mask
@@ -294,14 +315,8 @@ public class YOLOSegmentationRunner : SegmentationRunner
         );
 
 
-       // var nullPointerCatcherTensor = Functional.Constant(-1.0f);
-       // nullPointerCatcherTensor = Functional.BroadcastTo(nullPointerCatcherTensor, new int[] {1,1, MaskHeight, MaskWidth});
-       // masks = Functional.Concat(new FunctionalTensor[] {masks, nullPointerCatcherTensor}, 0);
-//        masks = Functional.Reshape(masks, new int[] {-1, OutputHeight, OutputWidth, 1});
-
-
-
-        var newOutputs = new FunctionalTensor[] {labelIDs, usedScores, coords, masks};
+        // Same 4 outputs as before — downstream code stays unchanged
+        var newOutputs = new FunctionalTensor[] {labelIDs, scores, boxCoords, masks};
 
         runtimeModel = graph.Compile(newOutputs);
 

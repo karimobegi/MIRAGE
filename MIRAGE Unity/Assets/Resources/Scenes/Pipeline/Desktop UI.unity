@@ -3493,6 +3493,7 @@ MonoBehaviour:
   VideoPlayer: {fileID: 91498960}
   VideoPanel: {fileID: 590234409}
   CurrentFrame: {fileID: 0}
+  passthroughCameraAccess: {fileID: 0}
 --- !u!114 &1165336078 stripped
 MonoBehaviour:
   m_CorrespondingSourceObject: {fileID: 5014003804536556975, guid: 0a51afb0b9e08f74b84b300b675c1b1c, type: 3}
@@ -4363,7 +4364,7 @@ PrefabInstance:
     - target: {fileID: 4472163729129746862, guid: 4ffc797f9536ffc42abd599f1a4196ce, type: 3}
       propertyPath: ModelAsset
       value: 
-      objectReference: {fileID: 5022602860645237092, guid: c7d772712250883449beb2898faa72de, type: 3}
+      objectReference: {fileID: 5022602860645237092, guid: d53fcc40a0ad88842aaa51da8f0412f6, type: 3}
     - target: {fileID: 4472163729129746862, guid: 4ffc797f9536ffc42abd599f1a4196ce, type: 3}
       propertyPath: OutputImage
       value: 
