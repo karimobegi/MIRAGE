@@ -125,7 +125,6 @@ The `Standalone` scene runs MIRAGE as a standalone Android app on the Meta Quest
 4. In Unity: `File > Build and Run` with the `Standalone` scene at index 0
 #### Technical Notes
 - The PCA captures frames at 1280×960 with 20-40ms capture latency
-- YOLO must be exported with `end2end = True` to avoid GPU compute buffer limits on the Quest 3's Adreno GPU (128MB max per buffer)
 - Detection count is capped at 25 to keep mask processing within GPU memory limits
 - The Meta Horizon PC app must be installed on the build machine for USB driver support
 
