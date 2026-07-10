@@ -10,7 +10,6 @@ GameObject:
   m_Component:
   - component: {fileID: 5214784420172681137}
   - component: {fileID: 1935412686521121079}
-  - component: {fileID: 3331162399830577427}
   m_Layer: 0
   m_Name: MI-GAN
   m_TagString: Untagged
@@ -56,32 +55,6 @@ MonoBehaviour:
   InputHeight: 512
   OutputWidth: 512
   OutputHeight: 512
-  SelectedClasses: []
-  MaskImage: {fileID: 0}
-  DebugOutputImage: {fileID: 0}
---- !u!114 &3331162399830577427
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 5690440486267950348}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 32a3bcfa53735b54aaa20f34859653b9, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::HINTRunner
-  IsEnabled: 1
-  ModelAsset: {fileID: 0}
-  UpdateRate: 1
-  MaxObjects: 256
-  OutputImage: {fileID: 0}
-  ImageWidth: 640
-  ImageHeight: 360
-  InputWidth: 256
-  InputHeight: 256
-  OutputWidth: 256
-  OutputHeight: 256
   SelectedClasses: []
   MaskImage: {fileID: 0}
   DebugOutputImage: {fileID: 0}

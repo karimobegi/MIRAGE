@@ -138,7 +138,7 @@ public class MIGANRunner : InpaintingRunner, IEffectHandler
     }
 
     public void UpdateClasses() {
-        if(SelectedClasses.Length == 0) { //ensure we dont crash
+        if(SelectedClasses == null || SelectedClasses.Length == 0) { //ensure we dont crash
             selectedClassesStructs = new InpaintingSettingStruct[] {new InpaintingSetting(-2, 0, 100).ToStruct()};
         } else {
             selectedClassesStructs = SelectedClasses.Select(x => x.ToStruct()).ToArray();
