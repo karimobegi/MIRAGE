@@ -37,9 +37,11 @@ We use [YOLO26-seg](https://github.com/ultralytics/ultralytics) for Object Detec
 from ultralytics import YOLO
 
 model = YOLO("yolo26s-seg.pt")
-model.export(format="onnx")
+model.export(format="onnx") # exports with end2end=True by default (NMS-free)
 ```
 For more detailed instructions, please refer to the [Official Documentation](https://docs.ultralytics.com/tasks/segment/)
+
+Note (passthrough-camera-api branch): This branch uses the default NMS-free export (end2end=True), where NMS is baked into the model. The main branch uses end2end=False, which performs NMS manually in the Unity Functional graph. The NMS-free export is required for Quest 3 deployment because the manual NMS approach allocates a 282MB GPU compute buffer, which exceeds the Quest 3's 128MB per-buffer hardware limit. The YOLORunner code on this branch is rewritten to parse the end2end output format: output0 is [1, 300, 38] containing bounding boxes (xyxy), scores, class IDs, and 32 mask coefficients per detection. output1 is [1, 32, H, W] containing proto masks. Detection count is capped at 25 to keep the mask processing tensor within GPU memory limits.
 
 #### Multi-Object Tracking
 
@@ -124,7 +126,7 @@ The `Standalone` scene runs MIRAGE as a standalone Android app on the Meta Quest
 3. Verify connection: run `adb devices` from the Android SDK platform-tools directory
 4. In Unity: `File > Build and Run` with the `Standalone` scene at index 0
 #### Technical Notes
-- The YOLO export script is different from the one in the main branch
+- The YOLO model must be exported with the default end2end=True (NMS-free). The main branch uses end2end=False with manual NMS in the Sentis Functional graph, but this allocates a 282MB GPU buffer that exceeds the Quest 3's 128MB limit. With end2end=True, NMS is handled inside the model, avoiding the large buffer allocation and allowing BackendType.GPUCompute to run on the Quest 3's Adreno GPU.
 - The PCA captures frames at 1280×960 with 20-40ms capture latency
 - Detection count is capped at 25 to keep mask processing within GPU memory limits
 - The Meta Horizon PC app must be installed on the build machine for USB driver support
