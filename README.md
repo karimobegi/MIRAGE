@@ -124,6 +124,7 @@ The `Standalone` scene runs MIRAGE as a standalone Android app on the Meta Quest
 3. Verify connection: run `adb devices` from the Android SDK platform-tools directory
 4. In Unity: `File > Build and Run` with the `Standalone` scene at index 0
 #### Technical Notes
+- The YOLO export script is different from the one in the main branch
 - The PCA captures frames at 1280×960 with 20-40ms capture latency
 - Detection count is capped at 25 to keep mask processing within GPU memory limits
 - The Meta Horizon PC app must be installed on the build machine for USB driver support
