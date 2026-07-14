@@ -2,6 +2,9 @@ using System.Collections;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
+using ByteTrackCSharp;
+using System.Linq;
+using System.Collections.Generic;
 
 /// <summary>
 /// Main Script that initializes and executes the pipeline
@@ -22,7 +25,7 @@ public class Pipeline : MonoBehaviour
     public TMP_Text inpaintingTimeText;
     public TMP_Text postProcessingTimeText;
 
-    private SegmentationRunner segmentationModel;
+    private YOLOSegmentationRunner segmentationModel;
     private DepthEstimationRunner depthModel;
     private InpaintingRunner inpaintingModel;
 
@@ -35,6 +38,9 @@ public class Pipeline : MonoBehaviour
 
     // Benchmark integration
     private IBenchmarkManager benchmarkManager;
+
+    private BYTETracker tracker;
+    public List<LabelledSTrack> labelledTracks;
 
 #region Initialization
     void Awake()
@@ -63,7 +69,7 @@ public class Pipeline : MonoBehaviour
     private void InitializePipeline()
     {
         //Find the models
-        segmentationModel = FindAnyObjectByType<SegmentationRunner>();
+        segmentationModel = FindAnyObjectByType<YOLOSegmentationRunner>();
         inpaintingModel = FindAnyObjectByType<InpaintingRunner>();
         depthModel = FindAnyObjectByType<DepthEstimationRunner>();
 
@@ -79,11 +85,10 @@ public class Pipeline : MonoBehaviour
         //Initialize postprocessors
         if (segmentationModel is YOLOSegmentationRunner)
         {
-
             cpuPostProcessors = FindObjectsByType<CPUPostProcessor>(FindObjectsSortMode.None);
             foreach (var processor in cpuPostProcessors)
             {
-                processor.Initialize(segmentationModel as YOLOSegmentationRunner, depthModel, CPUPostProcessingContainer);
+                processor.Initialize(segmentationModel as YOLOSegmentationRunner, depthModel, CPUPostProcessingContainer, this);
             }
         }
 
@@ -103,6 +108,34 @@ public class Pipeline : MonoBehaviour
         }        // Initialize Benchmark Manager
         var benchmarkManagerComponent = FindAnyObjectByType<BenchmarkManager>();
         benchmarkManager = benchmarkManagerComponent != null ? benchmarkManagerComponent : new NullBenchmarkManager(); //Null Object Pattern
+
+        tracker = new BYTETracker(obj => new LabelledSTrack(obj.rect, obj.prob, obj.label, obj.detection));
+        labelledTracks = new List<LabelledSTrack>();
+    }
+#endregion
+
+#region Object Tracking Function
+    private void getTracks(){
+        float[] bboxes = segmentationModel.BBoxes;
+        int[] labelIDs = segmentationModel.LabelIDs;
+        float[] scores = segmentationModel.Scores; 
+        List<ByteTrackCSharp.Object> objects = new List<ByteTrackCSharp.Object>();
+
+        for(int i = 0; i < segmentationModel.NumObjDetected; i++){
+            float cx = bboxes[i * 4 + 0];
+            float cy = bboxes[i * 4 + 1];
+            float w  = bboxes[i * 4 + 2];
+            float h  = bboxes[i * 4 + 3];
+            var rect = new ByteTrackCSharp.Rect(cx - w / 2f, cy - h / 2f, w, h);
+
+            int label = labelIDs[i];
+            float score = scores[i];
+            int detection = i;
+            objects.Add(new ByteTrackCSharp.Object(rect, label, score, detection));
+            }
+
+            List<STrack> tracks = tracker.update(objects);
+            labelledTracks = tracks.Cast<LabelledSTrack>().ToList();
     }
 #endregion
 
@@ -116,6 +149,9 @@ public class Pipeline : MonoBehaviour
 
             float startTime = Time.realtimeSinceStartup;
             yield return segmentationModel.RunModel(inputTexture);
+
+            getTracks();
+
             float endTime = Time.realtimeSinceStartup;
             float deltaTime = endTime - startTime;
 
@@ -190,7 +226,8 @@ public class Pipeline : MonoBehaviour
 #endregion
 
 #region Sequential Execution
-    float inferenceTime;    private IEnumerator RunSequentialPipeline()
+    float inferenceTime;    
+    private IEnumerator RunSequentialPipeline()
     {
         while (true)
         {
@@ -204,6 +241,7 @@ public class Pipeline : MonoBehaviour
             benchmarkManager.StartSegmentation();
             yield return StartCoroutine(segmentationModel.RunModel(inputTexture));
             benchmarkManager.EndSegmentation();
+            getTracks();
 
             // Depth Estimation
             if (depthModel.IsEnabled)

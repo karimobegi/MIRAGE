@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
+using ByteTrackCSharp;
 
 
 /// <summary>
@@ -43,8 +44,8 @@ public class BoundsPostProcessor : CPUPostProcessor
 
 #endregion
 #region Setup
-    public override void Initialize(YOLOSegmentationRunner r, DepthEstimationRunner d, RectTransform outputContainer) {
-        base.Initialize(r, d, outputContainer);
+    public override void Initialize(YOLOSegmentationRunner r, DepthEstimationRunner d, RectTransform outputContainer, Pipeline p) {
+        base.Initialize(r, d, outputContainer, p);
 
         // Calculate aspect ratio of the boxPrefab
         if (ImagePrefab != null) {
@@ -61,7 +62,7 @@ public class BoundsPostProcessor : CPUPostProcessor
         return imageObjects.Count > index;
     }
 
-    protected override void UpdateObject(int index, int objectIndex, Vector2 position, Vector2 size) {
+    protected override void UpdateObject(int index, LabelledSTrack track, Vector2 position, Vector2 size) {
         var rect = imageObjects[index].GetComponent<RectTransform>();
         var image = imageObjects[index].GetComponent<Image>();
 
@@ -76,11 +77,11 @@ public class BoundsPostProcessor : CPUPostProcessor
 
         rect.sizeDelta = size;
         rect.anchoredPosition = position;
-        image.color = GetColorForObject(objectIndex);
+        image.color = GetColorForObject(track);
         imageObjects[index].SetActive(true);
     }
 
-    protected override void CreateObject(int objectIndex, Vector2 position, Vector2 size) {
+    protected override void CreateObject(LabelledSTrack track, Vector2 position, Vector2 size) {
         GameObject box = Instantiate(ImagePrefab, outputContainer.transform);
         imageObjects.Add(box);
         var rect = box.GetComponent<RectTransform>();
@@ -97,7 +98,7 @@ public class BoundsPostProcessor : CPUPostProcessor
 
         rect.sizeDelta = size;
         rect.anchoredPosition = position;
-        image.color = GetColorForObject(objectIndex);
+        image.color = GetColorForObject(track);
     }
 
     protected override void DeactivateRemainingObjects(int startIndex) {

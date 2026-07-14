@@ -4,6 +4,7 @@
 StructuredBuffer<float> InputMasks;
 StructuredBuffer<float4> BoundingBoxes;
 StructuredBuffer<int> LabelIDs;
+StructuredBuffer<float> Scores;
 
 // Output buffer
 // Each int2 contains the mask index and label ID

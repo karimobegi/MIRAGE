@@ -4,7 +4,7 @@ using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
 using UnityEngine.UI;
-
+using ByteTrackCSharp;
 /// <summary>
 /// Postprocessor that creates an icon for classes
 /// 
@@ -19,16 +19,16 @@ public class IconPostProcessor : CPUPostProcessor
         return icons.Count > index;
     }
 
-    protected override void UpdateObject(int index, int objectIndex, Vector2 position, Vector2 size) {
+    protected override void UpdateObject(int index, LabelledSTrack track, Vector2 position, Vector2 size) {
         icons[index].GetComponent<RectTransform>().anchoredPosition = position;
-        icons[index].GetComponent<Image>().color = GetColorForObject(objectIndex);
+        icons[index].GetComponent<Image>().color = GetColorForObject(track);
         icons[index].SetActive(true);
     }
 
-    protected override void CreateObject(int objectIndex, Vector2 position, Vector2 size) {
+    protected override void CreateObject(LabelledSTrack track, Vector2 position, Vector2 size) {
         GameObject icon = Instantiate(iconPrefab, outputContainer.transform);
         icon.GetComponent<RectTransform>().anchoredPosition = position;
-        icon.GetComponent<Image>().color = GetColorForObject(objectIndex);
+        icon.GetComponent<Image>().color = GetColorForObject(track);
         icons.Add(icon);
     }
 

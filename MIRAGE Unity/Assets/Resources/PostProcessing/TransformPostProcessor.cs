@@ -4,6 +4,7 @@ using UnityEditor.PackageManager;
 using UnityEngine;
 using UnityEngine.UI;
 using UnityEngine.Experimental.Rendering;
+using ByteTrackCSharp;
 /// <summary>
 /// PostProcessor that applies a Translate, Rotate, and/or Scale effect the output of the ImageCopyPostProcessor and applies it to a RawImage.
 /// 
@@ -30,9 +31,9 @@ public class TransformPostProcessor : CPUPostProcessor
     private ImageCopyPostProcessor imageCopyPostProcessor;
     
     
-    public override void Initialize(YOLOSegmentationRunner r, DepthEstimationRunner d, RectTransform outputContainer)
+    public override void Initialize(YOLOSegmentationRunner r, DepthEstimationRunner d, RectTransform outputContainer, Pipeline p)
     {
-        base.Initialize(r, d, outputContainer);
+        base.Initialize(r, d, outputContainer, p);
 
         imageCopyPostProcessor = gameObject.GetComponent<ImageCopyPostProcessor>();
 
@@ -40,7 +41,7 @@ public class TransformPostProcessor : CPUPostProcessor
 
 
     // Method to cut a region from a RenderTexture and assign it to a RawImage
-    public void ApplyRegionToRawImage(RenderTexture source, Rect region, RawImage targetImage)
+    public void ApplyRegionToRawImage(RenderTexture source, UnityEngine.Rect region, RawImage targetImage)
     {
         try {
             // Check if target image is still valid
@@ -58,7 +59,7 @@ public class TransformPostProcessor : CPUPostProcessor
                 {
                     if (tempTexture != null)
                     {
-                        Object.Destroy(tempTexture);
+                        UnityEngine.Object.Destroy(tempTexture);
                     }
                     tempTexture = new Texture2D((int)region.width, (int)region.height, GraphicsFormat.R8G8B8A8_UNorm, TextureCreationFlags.None);
                     imageTextures[targetImage] = tempTexture;
@@ -112,7 +113,7 @@ public class TransformPostProcessor : CPUPostProcessor
         {
             if (pair.Value != null)
             {
-                Object.Destroy(pair.Value);
+                UnityEngine.Object.Destroy(pair.Value);
             }
             keysToRemove.Add(pair.Key);
         }
@@ -124,12 +125,12 @@ public class TransformPostProcessor : CPUPostProcessor
         }
     }
 
-    protected override void CreateObject(int objectIndex, Vector2 position, Vector2 size)
+    protected override void CreateObject(LabelledSTrack track, Vector2 position, Vector2 size)
     {
         GameObject go = Instantiate(RawImagePrefab, outputContainer.transform);
         imageObjects.Add(go);
 
-        UpdateObject(imageObjects.Count - 1, objectIndex, position, size);
+        UpdateObject(imageObjects.Count - 1, track, position, size);
     }
 
     protected override void DeactivateRemainingObjects(int startIndex)
@@ -155,7 +156,7 @@ public class TransformPostProcessor : CPUPostProcessor
         }
     }
 
-    protected override void UpdateObject(int index, int objectIndex, Vector2 position, Vector2 size)
+    protected override void UpdateObject(int index, LabelledSTrack track, Vector2 position, Vector2 size)
     {
         if (index >= imageObjects.Count || imageObjects[index] == null)
         {
@@ -186,14 +187,14 @@ public class TransformPostProcessor : CPUPostProcessor
         // Get the height of the source image/texture
         float imgHeight = imageCopyPostProcessor.OutputTexture.height;
         
-        Vector2 rawPos = CalculatePosition(objectIndex);
+        Vector2 rawPos = CalculatePosition(track);
         // Calculate the top-left corner of the region from the center position
         float regionX = rawPos.x - (size.x / 2);
         // Y position is calculated from the top of the image and needs to be inverted
         float regionY = (imgHeight + rawPos.y) - (size.y / 2);
         
         // Apply the region to the RawImage using the corrected coordinates
-        Rect region = new Rect(regionX, regionY, size.x, size.y);
+        UnityEngine.Rect region = new UnityEngine.Rect(regionX, regionY, size.x, size.y);
         ApplyRegionToRawImage(imageCopyPostProcessor.OutputTexture, region, rawImage);
 
         rect.localScale = new Vector3(ScalingFactor, ScalingFactor, 1f);

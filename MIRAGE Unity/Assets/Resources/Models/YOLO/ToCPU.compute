@@ -5,8 +5,10 @@
 
 RWStructuredBuffer<int> LabelIDsInput;
 RWStructuredBuffer<float> BBoxInput;
+RWStructuredBuffer<float> ScoresInput;
 RWStructuredBuffer<int> LabelIDsOutput;
 RWStructuredBuffer<float> BBoxOutput;
+RWStructuredBuffer<float> ScoresOutput;
 int NumDetections;
 
 [numthreads(1,1,1)]
@@ -22,5 +24,8 @@ void ToCPU (uint3 id : SV_DispatchThreadID)
         BBoxOutput[id.x * 4 + 1] = BBoxInput[id.x * 4 + 1]; // y
         BBoxOutput[id.x * 4 + 2] = BBoxInput[id.x * 4 + 2]; // width
         BBoxOutput[id.x * 4 + 3] = BBoxInput[id.x * 4 + 3]; // height
+         
+        // Copy confidence scores
+        ScoresOutput[id.x] = ScoresInput[id.x];
     }
 }
