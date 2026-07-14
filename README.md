@@ -130,6 +130,11 @@ The `Standalone` scene runs MIRAGE as a standalone Android app on the Meta Quest
 - The PCA captures frames at 1280×960 with 20-40ms capture latency
 - Detection count is capped at 25 to keep mask processing within GPU memory limits
 - The Meta Horizon PC app must be installed on the build machine for USB driver support
+#### Required packages for Quest 3 Builds:
+- Meta XR SDK (MRUK v85.0.0) - install via Unity Package Manager
+- OpenXR Plugin - install via Unity Package Manager
+- Remove Occulus XR Plugin if present
+- Meta Horizon PC app must be installed on the machine connected to the Quest 3.
 
 ### UI Controls
 - Keyboard: Mouse or Arrow Keys, Enter/Space, ESC
