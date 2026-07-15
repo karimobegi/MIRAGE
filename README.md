@@ -33,10 +33,19 @@ After acquiring an ONNX model, add it to the Unity project.
 #### Object Detection & Segmentation
 We use [YOLO26-seg](https://github.com/ultralytics/ultralytics) for Object Detection and Segmentation. It can be converted to `ONNX` with this Python code:
 
+Here are the export for both small and nano versions with the nano faster than the small:
+#### Small
 ```python
 from ultralytics import YOLO
 
 model = YOLO("yolo26s-seg.pt")
+model.export(format="onnx") # exports with end2end=True by default (NMS-free)
+```
+#### Nano
+```python
+from ultralytics import YOLO
+
+model = YOLO("yolo26n-seg.pt")
 model.export(format="onnx") # exports with end2end=True by default (NMS-free)
 ```
 For more detailed instructions, please refer to the [Official Documentation](https://docs.ultralytics.com/tasks/segment/)
