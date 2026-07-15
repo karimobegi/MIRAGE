@@ -981,8 +981,12 @@ public class BenchmarkManager : MonoBehaviour, IBenchmarkManager
         string baseFileName = $"{filePrefix}_{timestamp}";
         
         // Create a directory for benchmark exports relative to the project root (not inside Assets)
-        string projectPath = Application.dataPath.Replace("/Assets", ""); // Get project root
+#if UNITY_ANDROID
+        string exportPath = Path.Combine(Application.persistentDataPath, "BenchmarkExports");
+#else
+        string projectPath = Application.dataPath.Replace("/Assets", "");
         string exportPath = Path.Combine(projectPath, "BenchmarkExports");
+#endif
         if (!Directory.Exists(exportPath))
         {
             Directory.CreateDirectory(exportPath);
