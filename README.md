@@ -145,6 +145,17 @@ The `Standalone` scene runs MIRAGE as a standalone Android app on the Meta Quest
 - Remove Occulus XR Plugin if present
 - Meta Horizon PC app must be installed on the machine connected to the Quest 3.
 
+### How to Benchmark on Quest 3
+- Open the Standalone scene
+- Ensure a BenchmarkManager component is already added to a GameObject in the scene. Enable auto-start and CSV export.
+- Remove the PipelineUIHandler component from the scene (it overrides model update rates and toggles)
+- Set model update rates in the Inspector (1.0 for full-speed benchmarking)
+- Build and Run to the Quest 3
+- Wait for the benchmark to complete (60 seconds by default)
+- Pull results via ADB:
+adb pull /storage/emulated/0/Android/data/com.UUlmHCI.MIRAGE/files/BenchmarkExports/
+
+Note: Quest 3 benchmarks use the live Passthrough Camera feed, so results may vary slightly between runs depending on scene complexity. Inpainting is not currently supported on Quest 3 builds.
 ### UI Controls
 - Keyboard: Mouse or Arrow Keys, Enter/Space, ESC
 - Gamepad (XBOX): Left Stick, A Button, B Button

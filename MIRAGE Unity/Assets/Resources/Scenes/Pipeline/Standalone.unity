@@ -2970,7 +2970,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 5679560247574380171, guid: ab86f2914800cda49b5760ab0fbd7af5, type: 3}
       propertyPath: IsEnabled
-      value: 1
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 5679560247574380171, guid: ab86f2914800cda49b5760ab0fbd7af5, type: 3}
       propertyPath: m_Enabled
@@ -4875,7 +4875,7 @@ PrefabInstance:
     - target: {fileID: 4472163729129746862, guid: 4ffc797f9536ffc42abd599f1a4196ce, type: 3}
       propertyPath: ModelAsset
       value: 
-      objectReference: {fileID: 5022602860645237092, guid: c4b6b20c0fb01c14391e8ebfe622d63c, type: 3}
+      objectReference: {fileID: 5022602860645237092, guid: 7a934c2fdfac08945b1b93c5ab594aa0, type: 3}
     - target: {fileID: 4472163729129746862, guid: 4ffc797f9536ffc42abd599f1a4196ce, type: 3}
       propertyPath: OutputImage
       value: 
