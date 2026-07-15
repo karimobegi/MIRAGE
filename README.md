@@ -31,20 +31,36 @@ Enrico Rukzio <sup>a</sup>
 `MIRAGE` utilizes multiple computational models that need to be converted to the `ONNX` format.
 After acquiring an ONNX model, add it to the Unity project.
 #### Object Detection & Segmentation
-We use [YOLO11-seg](https://github.com/ultralytics/ultralytics) for Object Detection and segmentation. It can be converted to `ONNX` with this Python code:
+We use [YOLO26-seg](https://github.com/ultralytics/ultralytics) for Object Detection and Segmentation. It can be converted to `ONNX` with this Python code:
 
 ```python
 from ultralytics import YOLO
 
-model = YOLO("yolo11s-seg.pt")
-model.export(format="onnx")
+model = YOLO("yolo26s-seg.pt")
+model.export(format="onnx", end2end = False)
 ```
 For more detailed instructions, please refer to the [Official Documentation](https://docs.ultralytics.com/tasks/segment/)
 
+#### Multi-Object Tracking
+
+We use [ByteTrack](https://github.com/penspanic/ByteTrack-CSharp) for persistent multi-object tracking across frames, ensuring stable object identities for post-processing effects. ByteTrack is included in the project under `Assets/ByteTrack-CSharp/`. Install its dependencies:
+
+1. Enable `Allow 'unsafe' Code` in `Edit > Project Settings > Player > Other Settings`.
+
 #### Depth Estimation
 
-We use [Depth Anything V2](https://github.com/DepthAnything/Depth-Anything-V2) for metric depth estimation.
-1. Download the `depth_anything_v2_vits_outdoor_dynamic` model from [this repository](https://github.com/fabio-sim/Depth-Anything-ONNX/releases/tag/v2.0.0).
+We use [Depth Anything V3](https://github.com/ByteDance-Seed/Depth-Anything-3) (DA3-Small) for relative depth estimation.
+
+1. Clone the [Depth-Anything-3-Onnx](https://github.com/devin-lai/Depth-Anything-3-Onnx) repository.
+2. Install dependencies:
+```bash
+pip install -r requirements.txt addict safetensors
+```
+3. Export the model:
+```bash
+python export_onnx.py --model depth-anything/DA3-SMALL --process-res 504 --output DA3-SMALL-504.onnx
+```
+4. Add the exported `DA3-SMALL-504.onnx` file to the Unity project.
 
 #### Inpainting
 We use the [MI-GAN](https://github.com/Picsart-AI-Research/MI-GAN) Inpainting Model to realize effects such as `Remove` or `Opacity`. We modified their ONNX export pipeline to improve compatibility with ours.
