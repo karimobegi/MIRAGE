@@ -17,9 +17,12 @@ public class ClassPanel : MonoBehaviour
 
     public void Initialize(ClassSetting setting) {
         ClassSetting = setting;
-        classNameText.text = setting.ClassName;
+        if (classNameText != null) classNameText.text = setting.ClassName;
+        if (effectPanels == null) effectPanels = new List<EffectPanel>();
     }
     public void AddEffectPanel(EffectPanel effectPanel) {
+        if (effectPanels == null) effectPanels = new List<EffectPanel>();
+        if (effectPanel == null || effectPanels.Contains(effectPanel)) return;
         effectPanels.Add(effectPanel);
         effectPanel.Initialize(this);
     }
@@ -30,6 +33,6 @@ public class ClassPanel : MonoBehaviour
 
 
     public void OnAddEffectButtonPress() {
-        EffectSelectorPanel.Instance.SwitchClassPanel(this);
+        if (EffectSelectorPanel.Instance != null) EffectSelectorPanel.Instance.SwitchClassPanel(this);
     }
 }

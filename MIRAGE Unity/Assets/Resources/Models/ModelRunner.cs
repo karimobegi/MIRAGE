@@ -88,6 +88,9 @@ public abstract class ModelRunner : MonoBehaviour
     {
         InputFrameId = frameId;
         InputCapturedAt = capturedAt;
+        // The same source frame can be processed again after changing a preset.
+        // A failed new request must never reuse its previous success marker.
+        OutputFrameId = -1;
     }
 
 

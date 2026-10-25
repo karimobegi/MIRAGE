@@ -46,6 +46,14 @@ public class Pipeline : MonoBehaviour
     private long lastConsumedFrame = -1;
     private CameraInput lastSource;
     private double depthStartedAt;
+    private int settingsRevision;
+
+    public void NotifySettingsChanged()
+    {
+        settingsRevision++;
+        // Paused recordings still need one new result when their effects change.
+        lastConsumedFrame = -1;
+    }
 
     private void Awake()
     {
@@ -123,6 +131,7 @@ public class Pipeline : MonoBehaviour
             long frameId = source.FrameId;
             long sourceVersion = source.SourceVersion;
             double capturedAt = source.FrameTimestamp;
+            int frameSettingsRevision = settingsRevision;
             lastConsumedFrame = frameId;
             Graphics.Blit(source.CurrentFrame, processingFrame);
             segmentationModel.SetInputFrame(frameId, capturedAt);
@@ -175,7 +184,7 @@ public class Pipeline : MonoBehaviour
             }
 
             // A seek/source switch invalidates the whole in-flight frame.
-            if (source != CameraInput.Instance || source.SourceVersion != sourceVersion)
+            if (source != CameraInput.Instance || source.SourceVersion != sourceVersion || settingsRevision != frameSettingsRevision)
             {
                 benchmarkManager.EndIteration();
                 yield return null;

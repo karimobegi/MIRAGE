@@ -6,6 +6,14 @@
 
 ![An illustration comparing reality (left) with an Automotive Mediated Reality (right)](./images/teaser_mirage.png)
 
+## Start here
+
+- **Using a prepared MIRAGE copy:** follow the [operator tutorial](Docs/OPERATOR_GUIDE.md). Open **Help & setup (F1)** to choose a recording or camera, load a starter preset, save your setup, or export support logs.
+- **Preparing MIRAGE for your team:** follow [Getting started](Docs/GETTING_STARTED.md), then the [release checklist](Docs/RELEASE_CHECKLIST.md). The Unity menus under **MIRAGE > Prepare desktop** and **MIRAGE > Build** provide consistent defaults and a dedicated Windows operator package.
+- **Diagnosing a problem:** see [Logging and support](Docs/LOGGING.md). Session diagnostics and reusable presets live in the user's writable application-data folder; support exports contain metadata and logs rather than recordings.
+
+The source checkout still needs the documented Unity Editor and model assets. A packaged Windows build must be prepared and tested before handing it to operators; no prebuilt installer is included in this repository.
+
 Traffic is inherently dangerous, with around 1.19 million fatalities annually. Automotive Mediated Reality (AMR) can enhance driving safety by overlaying critical information (e.g., outlines, icons, text) on key objects to improve awareness, altering objects' appearance to simplify traffic situations, and diminishing their appearance to minimize distractions. However, real-world AMR evaluation remains limited due to technical challenges. To fill this sim-to-real gap, we present `MIRAGE`, an open-source tool that enables real-time AMR in real vehicles. `MIRAGE` implements 15 effects across the AMR spectrum of augmented, diminished, and modified reality using state-of-the-art computational models for object detection and segmentation, depth estimation, and inpainting. In an on-road expert user study (N=9) of `MIRAGE`, participants enjoyed the AMR experience while pointing out technical limitations and identifying use cases for AMR. We discuss these results in relation to prior work and outline implications for AMR ethics and interaction design.
 
 

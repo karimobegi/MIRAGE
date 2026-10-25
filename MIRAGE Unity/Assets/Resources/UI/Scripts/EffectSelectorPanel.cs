@@ -1,6 +1,5 @@
 using System.Collections;
 using System.Collections.Generic;
-using OpenCover.Framework.Model;
 using UnityEngine;
 using UnityEngine.Rendering;
 using UnityEngine.UI;

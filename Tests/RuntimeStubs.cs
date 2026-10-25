@@ -14,7 +14,7 @@ namespace UnityEngine
     public sealed class HeaderAttribute : Attribute { public HeaderAttribute(string text) { } }
     public enum FindObjectsSortMode { None }
     public enum FindObjectsInactive { Include }
-    public class Object
+    public partial class Object
     {
         public string name = "test";
         public static readonly List<Object> Objects = new List<Object>();
@@ -26,6 +26,7 @@ namespace UnityEngine
         public static GameObject Instantiate(GameObject value, Transform parent) => new GameObject();
         public static void Destroy(Object value) { Objects.Remove(value); }
         public static void DestroyImmediate(Object value) { Destroy(value); }
+        public static void DontDestroyOnLoad(Object value) { }
     }
     public class MonoBehaviour : Object
     {
@@ -131,8 +132,8 @@ namespace UnityEngine
     public enum RenderTextureReadWrite { Linear }
     public enum ColorSpace { Gamma,Linear }
     public static class QualitySettings { public static ColorSpace activeColorSpace=ColorSpace.Linear; }
-    public static class SystemInfo { public static bool supportsAsyncGPUReadback=true,supportsComputeShaders=true; }
-    public static class Application { public static bool isPlaying=true; }
+    public static partial class SystemInfo { public static bool supportsAsyncGPUReadback=true,supportsComputeShaders=true; }
+    public static partial class Application { public static bool isPlaying=true; }
     public static class JsonUtility { public static string ToJson(object value)=>"{}"; public static T FromJson<T>(string value)=>default; }
     public class Texture : Object { public int width, height; public long Stamp; public FilterMode filterMode;public TextureWrapMode wrapMode; }
     public class Texture2D : Texture
@@ -164,12 +165,14 @@ namespace UnityEngine
     }
     public class WebCamTexture : Texture
     {
+        public static WebCamDevice[] devices = Array.Empty<WebCamDevice>();
         public bool isPlaying, didUpdateThisFrame;
         public WebCamTexture(int width,int height,int fps) { this.width=16;this.height=16; }
         public WebCamTexture(string name,int width,int height,int fps) : this(width,height,fps) { }
         public void Play() { isPlaying=true; }
         public void Stop() { isPlaying=false; }
     }
+    public struct WebCamDevice { public string name; }
     public static class Graphics { public static void Blit(Texture source,RenderTexture target) { target.Stamp=source.Stamp; } }
     public static class GL { public static void Clear(bool depth,bool color,Color value) { if(RenderTexture.active!=null) RenderTexture.active.Stamp=0; } }
     public class ComputeBuffer : IDisposable
@@ -206,10 +209,12 @@ namespace UnityEngine
         public bool Overlaps(Rect other)=>xMin<other.xMax&&xMax>other.xMin&&yMin<other.yMax&&yMax>other.yMin;
     }
     public class RectTransform : Transform { public Rect rect=new Rect { size=new Vector2(640,360) }; public Vector2 pivot, anchoredPosition; }
-    public class GameObject : Object
+    public partial class GameObject : Object
     {
+        public GameObject(string name = "test") { this.name = name; }
         public Transform transform=new Transform();
-        public int scene;
+        public TestScene scene;
+        public T AddComponent<T>() where T:new() => new T();
         public void SetActive(bool active) { }
         public T GetComponent<T>() where T:new() => new T();
         public T GetComponentInChildren<T>() where T:new() => new T();
@@ -229,15 +234,27 @@ namespace TMPro
 }
 namespace UnityEngine.Video
 {
+    public enum VideoSource { VideoClip,Url }
+    public enum VideoAspectRatio { NoScaling = 0, FitInside = 3 }
     public class VideoPlayer : UnityEngine.Object
     {
         public UnityEngine.RenderTexture targetTexture;
         public long frame=-1;
         public bool sendFrameReadyEvents;
+        public bool isPlaying;
+        public double time;
+        public VideoSource source;
+        public VideoAspectRatio aspectRatio;
+        public string url;
         public event Action<VideoPlayer,long> frameReady;
         public event Action<VideoPlayer> seekCompleted;
-        public void Play() { }
-        public void Stop() { }
+        public event Action<VideoPlayer> prepareCompleted;
+        public event Action<VideoPlayer,string> errorReceived;
+        public void Play() { isPlaying=true; }
+        public void Pause() { isPlaying=false; }
+        public void Stop() { isPlaying=false; }
+        public void EmitError(string message) { errorReceived?.Invoke(this,message); }
+        public void EmitPrepared() { prepareCompleted?.Invoke(this); }
         public void EmitFrame(long frame) { this.frame=frame;frameReady?.Invoke(this,frame); }
         public void EmitSeek() { seekCompleted?.Invoke(this); }
     }
@@ -436,14 +453,14 @@ namespace UnityEditor
     [AttributeUsage(AttributeTargets.Method,AllowMultiple=true)]
     public class MenuItem : Attribute { public MenuItem(string path,bool validate=false) { } }
     public static class Selection {public static UnityEngine.GameObject activeGameObject;}
-    public static class EditorApplication {public static bool isPlayingOrWillChangePlaymode;}
+    public static class EditorApplication {public static bool isPlayingOrWillChangePlaymode,isPlaying;}
     public static class Undo
     {
         public static T AddComponent<T>(UnityEngine.GameObject target) where T:new()=>new T();
         public static void SetCurrentGroupName(string name) { }
         public static void RecordObject(UnityEngine.Object target,string name) { }
     }
-    public static class EditorUtility {public static void SetDirty(UnityEngine.Object target) { }}
+    public static partial class EditorUtility {public static void SetDirty(UnityEngine.Object target) { }}
     public static class EditorGUIUtility {public static void PingObject(UnityEngine.Object target) { }}
     public class SerializedProperty
     {
@@ -462,4 +479,27 @@ namespace UnityEditor
         public void ApplyModifiedProperties() { }
     }
 }
-namespace UnityEditor.SceneManagement {public static class EditorSceneManager {public static void MarkSceneDirty(int scene) { }}}
+namespace UnityEditor.SceneManagement {public static partial class EditorSceneManager {public static void MarkSceneDirty(UnityEngine.TestScene scene) { }}}
+
+namespace UnityEngine
+{
+    public struct TestScene
+    {
+        public int id; public string path; public bool isDirty;
+        public static implicit operator TestScene(int id)=>new TestScene{id=id};
+        public static bool operator ==(TestScene a,TestScene b)=>a.id==b.id && a.path==b.path;
+        public static bool operator !=(TestScene a,TestScene b)=>!(a==b);
+        public override bool Equals(object value)=>value is TestScene s && this==s;
+        public override int GetHashCode()=>id;
+    }
+}
+
+#if !MIRAGE_DIAGNOSTICS_REAL
+namespace Mirage.Diagnostics
+{
+    public static class MirageDiagnostics
+    {
+        public static void Record(string code,string message,object details=null,string severity="info") { }
+    }
+}
+#endif

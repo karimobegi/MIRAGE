@@ -37,6 +37,8 @@ public static class MirageRuntimeChecks
         CoherentPipeline(true);
         SourceSwitchDiscardsInflightFrame();
         SameIdCameraReplacementIsProcessed();
+        SettingsChangesRefreshPausedInput();
+        SettingsChangesDiscardInflightResults();
         return "PASS: actual-source disabled-backend/lazy initialization, scheduler budgets/finally, depth validity+units+borrowed ownership, CPU class/detection selection, camera restart/discontinuity/timestamps, sequential+parallel frame coherence/double buffering, and source-switch invalidation.";
     }
 
@@ -272,6 +274,31 @@ public static class MirageRuntimeChecks
         Check(f.Inpainting.HistoryResets==previousResets+1,"Replacement camera did not invalidate temporal history");
         Tick(20);
         Check(f.Pipeline.PublishedFrameCount==2,"Replacement camera frame was processed repeatedly");
+    }
+
+    private static void SettingsChangesRefreshPausedInput()
+    {
+        var f=Setup(false);
+        Until(()=>f.Pipeline.PublishedFrameCount==1);
+        long frame=f.Camera.FrameId;
+        int calls=f.Segmentation.Calls;
+        f.Pipeline.NotifySettingsChanged();
+        Until(()=>f.Pipeline.PublishedFrameCount==2);
+        Check(f.Pipeline.PublishedFrameId==frame && f.Segmentation.Calls==calls+1,"Applying effects did not refresh the paused source exactly once");
+        Tick(20);
+        Check(f.Pipeline.PublishedFrameCount==2,"Paused preset refresh kept reprocessing unchanged input");
+        f.Inpainting.SetInputFrame(frame,0);
+        Check(f.Inpainting.OutputFrameId==-1,"A new request on the same frame retained a stale success marker");
+    }
+
+    private static void SettingsChangesDiscardInflightResults()
+    {
+        var f=Setup(false);
+        Tick();
+        f.Pipeline.NotifySettingsChanged();
+        Until(()=>f.Pipeline.PublishedFrameCount==1);
+        Check(f.Segmentation.Calls==2,"Settings changed in flight without discarding and reprocessing the old result");
+        Check(f.Pipeline.OutputImage.texture.Stamp==f.Camera.FrameId,"Preset refresh published an unrelated snapshot");
     }
 }
 

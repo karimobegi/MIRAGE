@@ -7,6 +7,10 @@ pwsh -NoProfile -File Tests/Validate-Shaders.ps1
 pwsh -NoProfile -File Tests/Validate-Runtime.ps1
 pwsh -NoProfile -File Tests/Test-InpaintingGeometry.ps1
 python Tests/test_depth_reduction.py
+pwsh -NoProfile -File Tests/Validate-Logging.ps1
+pwsh -NoProfile -File Tests/Validate-Presets.ps1
+pwsh -NoProfile -File Tests/Validate-PresetsUi.ps1
+pwsh -NoProfile -File Tests/Validate-Usability.ps1
 ```
 
 `Validate-Shaders.ps1` compiles every actual compute-shader kernel under `Assets/Resources` with Windows D3DCompiler (`cs_5_0`). It expands quoted local HLSL includes and reports compiler diagnostics. It requires Windows and `d3dcompiler_47.dll`; it does not dispatch GPU kernels or validate Unity bindings.
@@ -22,3 +26,13 @@ For real graphics validation, open Unity with a graphics device and run **MIRAGE
 The [official 2.2.1 package](https://download.packages.unity.com/com.unity.ai.inference/-/com.unity.ai.inference-2.2.1.tgz), `Runtime/Core/Converters/TextureConverter.cs`, enables `LINEAR_TO_SRGB` when `GraphicsFormatUtility.IsSRGBFormat(texture.graphicsFormat)` is true. `Runtime/Core/Resources/InferenceEngine/TextureConversion/TextureToTensor.compute` applies the corresponding RGB transfer after sampling. Therefore `TextureConverter.ToTensor` already restores model-space sRGB for sRGB-format textures; an unconditional extra gamma conversion would double-encode them. This decision follows the actual input graphics format, not only the project's color-space setting.
 
 The custom MI-GAN crop shader and Moebius readback bridge bypass `ToTensor`, so their explicit linear-to-sRGB conversion is intentional. DA3 then applies the ImageNet RGB normalization required by the documented exporter. A real Unity check should still confirm the graphics formats and sampled values of camera, intermediate, and output textures in both Gamma and Linear projects.
+
+## Operator and support checks
+
+`Validate-Logging.ps1` compiles the actual plain .NET session writer against Newtonsoft.Json and exercises real files and ZIPs: concurrent producers, bounded queues, rate suppression, rotation, owned-session retention, active-session locks, path redaction, shutdown, and storage failures. It does not exercise Unity's native log callback delivery.
+
+`Validate-Presets.ps1` exercises the actual preset store, validation, atomic overwrite, last-session files, and storage failures. `Validate-PresetsUi.ps1` compiles the actual UI/preset code against explicit managed Unity seams and checks reconstruction, packed filter controls, lifecycle callbacks, automatic restore, and rejection of incompatible depth units/models before changing visible state.
+
+`Validate-Usability.ps1` compiles the actual desktop operator panel, startup checks, source controls, diagnostics adapter, and release-preparation menu against managed Unity seams. It also runs the pipeline regressions, including applying effects to a paused input and discarding a result whose settings changed in flight. Checks cover file-URI escaping, preserving the active source after a failed selection, decoder errors, paused-video health, setup remedies, and the native Windows file-dialog structure layout. It does not open the native dialog, render the GUI, verify the platform's video codecs, or execute a player build.
+
+Run the new scripts in separate PowerShell processes because they compile overlapping production types. Completing these checks does not establish a tested standalone release. Use [the release checklist](../Docs/RELEASE_CHECKLIST.md) on a real prepared Unity project and on a clean target computer.
