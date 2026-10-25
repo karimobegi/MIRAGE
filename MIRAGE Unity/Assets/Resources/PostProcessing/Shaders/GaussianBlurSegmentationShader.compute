@@ -12,7 +12,6 @@ RWTexture2D<float4> Result;
 RWTexture2D<float4> TempResult;
 Texture2D<float4> InputTexture;
 StructuredBuffer<int2> outputArray;
-StructuredBuffer<float> objectDepths;
 int width;
 int height;
 uint inputWidth;
@@ -38,7 +37,7 @@ void HorizontalBlur(uint3 id : SV_DispatchThreadID)
     int2 c = outputArray[outputIndex];
     int objectId = c.x;
     int classIndex = c.y;
-    float depth = objectDepths[objectId];
+    float depth = ReadObjectDepth(objectId);
 
     int2 inputCoord = int2(id.x, inputHeight - 1 - id.y);
     float4 color = float4(0, 0, 0, 0);
@@ -83,7 +82,7 @@ void VerticalBlur(uint3 id : SV_DispatchThreadID)
     int2 c = outputArray[outputIndex];
     int objectId = c.x;
     int classIndex = c.y;
-    float depth = objectDepths[objectId];
+    float depth = ReadObjectDepth(objectId);
 
     int2 inputCoord = int2(id.x, inputHeight - 1 - id.y);
     float4 color = float4(0, 0, 0, 0);

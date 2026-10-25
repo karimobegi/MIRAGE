@@ -2,12 +2,9 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
-using Unity.Collections;
 using Unity.InferenceEngine;
-using Unity.VisualScripting;
-using UnityEditor.EditorTools;
-using UnityEditor.Experimental.GraphView;
 using UnityEngine;
+using UnityEngine.Rendering;
 using UnityEngine.UI;
 
 
@@ -141,6 +138,9 @@ public class YOLOSegmentationRunner : SegmentationRunner
     private ComputeShader toCPUShader;
     private int extractLabelIDsKernel;
     private ComputeBuffer labelIDsOutputBuffer, bboxOutputBuffer, scoresOutputBuffer;
+    private AsyncGPUReadbackRequest labelsReadback, boxesReadback, scoresReadback;
+    private bool metadataPending;
+    private int clearMaskKernel;
 
     public ComputeBuffer ClassIdsBuffer { get => labelIDsOutputBuffer; }
 
@@ -154,18 +154,15 @@ public class YOLOSegmentationRunner : SegmentationRunner
 #region Model Execution
 
     public override IEnumerator RunModel(params Texture[] inputs) {
-        InputImage.texture = inputs[0];
-        inputTensor = TextureConverter.ToTensor(inputs[0], inputTextureTransform);
+        if (InputImage != null) InputImage.texture = inputs[0];
+        TextureConverter.ToTensor(inputs[0], inputTensor, inputTextureTransform);
         schedule = worker.ScheduleIterable(inputTensor);
 
         yield return RunInference();
     }
 
     protected override bool RequestsDone() {
-        return maskTensor.IsReadbackRequestDone() 
-        && bboxTensor.IsReadbackRequestDone() 
-        && labelIDTensor.IsReadbackRequestDone() 
-        && scoresTensor.IsReadbackRequestDone();
+        return !metadataPending || (labelsReadback.done && boxesReadback.done && scoresReadback.done);
     }
 
     protected override void PeekOutput() {
@@ -176,25 +173,27 @@ public class YOLOSegmentationRunner : SegmentationRunner
         maskTensor = worker.PeekOutput("output_3") as Tensor<float>;  // N , 160, 160 ,1      (160,160) by default, adjusted to output width and height for this
 
         numDetections = Math.Min(labelIDTensor.shape[0], MaxObjects);
-        labelIDTensor.ReadbackRequest();
-        scoresTensor.ReadbackRequest();
-        bboxTensor.ReadbackRequest();
-        maskTensor.ReadbackRequest();
+        CreateInstanceSegmentationMask();
+        TransferDataToCPU();
     }
 
     protected override void ReadOutput()
     {
-/*        if(OutputBuffer != null) {
-            OutputBuffer.Dispose();
-        }*/
-        CreateInstanceSegmentationMask();
-        TransferDataToCPU();
-
-        // Clean up tensors immediately
-        inputTensor.Dispose();
-        maskTensor.Dispose();
-        scoresTensor.Dispose();     
-        DisposeOutput(); //Temporary
+        Array.Clear(labelIDData, 0, labelIDData.Length);
+        Array.Clear(bboxData, 0, bboxData.Length);
+        Array.Clear(scoresData, 0, scoresData.Length);
+        if (!metadataPending) return;
+        metadataPending = false;
+        if (labelsReadback.hasError || boxesReadback.hasError || scoresReadback.hasError)
+        {
+            numDetections = 0;
+            ClearInstanceMask();
+            Debug.LogError("YOLO metadata GPU readback failed; this frame has no detections.", this);
+            return;
+        }
+        labelsReadback.GetData<int>().CopyTo(labelIDData);
+        boxesReadback.GetData<float>().CopyTo(bboxData);
+        scoresReadback.GetData<float>().CopyTo(scoresData);
     }
 #endregion
 
@@ -210,6 +209,7 @@ public class YOLOSegmentationRunner : SegmentationRunner
         .SetDimensions(scaledWidth, scaledHeight,3)
         .SetChannelSwizzle(ChannelSwizzle.RGBA)
         .SetTensorLayout(TensorLayout.NCHW);
+        inputTensor = new Tensor<float>(new TensorShape(1, 3, scaledHeight, scaledWidth));
         var internalMaskWidth = InputWidth / MaskScalingFactor;
         var internalMaskHeight = InputHeight / MaskScalingFactor;
         var pad_h_scaled = Mathf.RoundToInt(pad_h / MaskScalingFactor);
@@ -326,15 +326,18 @@ public class YOLOSegmentationRunner : SegmentationRunner
         labelIDData = new int[MaxObjects];
         scoresData = new float[MaxObjects];
 
-        instanceSegmentationShader = Resources.Load<ComputeShader>("Models/YOLO/InstanceSegmentationShader");
+        instanceSegmentationShader = Instantiate(Resources.Load<ComputeShader>("Models/YOLO/InstanceSegmentationShader"));
         instanceSegmentationKernel = instanceSegmentationShader.FindKernel("InstanceSegmentation");
+        clearMaskKernel = instanceSegmentationShader.FindKernel("ClearInstanceMask");
         instanceSegmentationShader.SetInt("MaskWidth", OutputWidth);
         instanceSegmentationShader.SetInt("MaskHeight", OutputHeight);
 
-        float scale = Mathf.Max((float)OutputWidth/InputHeight, (float)OutputHeight/InputWidth);
-        instanceSegmentationShader.SetFloat("Scale", scale);
+        var boxScale = new Vector4((float)OutputWidth / (ClipPadding ? scaledWidth : InputWidth),
+            (float)OutputHeight / (ClipPadding ? scaledHeight : InputHeight), 0, 0);
+        instanceSegmentationShader.SetVector("Scale", boxScale);
+        toCPUShader.SetVector("Scale", boxScale);
 
-        visualizationShader = Resources.Load<ComputeShader>("Models/YOLO/InstanceSegmentationVisualizerShader");
+        visualizationShader = Instantiate(Resources.Load<ComputeShader>("Models/YOLO/InstanceSegmentationVisualizerShader"));
         visualizationKernel = visualizationShader.FindKernel("VisualizeSegmentation");
         visualizationShader.SetInt("TextureWidth", OutputWidth);
         visualizationShader.SetInt("TextureHeight", OutputHeight);
@@ -347,6 +350,11 @@ public class YOLOSegmentationRunner : SegmentationRunner
 
     private void CreateInstanceSegmentationMask()
     {
+        if (numDetections == 0)
+        {
+            ClearInstanceMask();
+            return;
+        }
         
         instanceSegmentationShader.SetBuffer(instanceSegmentationKernel, "InputMasks", ComputeTensorData.Pin(maskTensor).buffer);
         instanceSegmentationShader.SetBuffer(instanceSegmentationKernel, "BoundingBoxes", ComputeTensorData.Pin(bboxTensor).buffer);
@@ -369,7 +377,17 @@ public class YOLOSegmentationRunner : SegmentationRunner
             1);
 
         // Assign the visualization texture to your output image
-        OutputImage.texture = visualizationTexture;
+        if (OutputImage != null) OutputImage.texture = visualizationTexture;
+    }
+
+    private void ClearInstanceMask()
+    {
+        instanceSegmentationShader.SetBuffer(clearMaskKernel, "OutputBuffer", OutputBuffer);
+        instanceSegmentationShader.Dispatch(clearMaskKernel, Mathf.CeilToInt(OutputWidth / 8f), Mathf.CeilToInt(OutputHeight / 8f), 1);
+        var previous = RenderTexture.active;
+        RenderTexture.active = visualizationTexture;
+        GL.Clear(false, true, Color.clear);
+        RenderTexture.active = previous;
     }
 
     /// <summary>
@@ -384,7 +402,8 @@ public class YOLOSegmentationRunner : SegmentationRunner
     /// </summary>
     private void TransferDataToCPU()
     {
-        if (numDetections == 0) return;
+        metadataPending = numDetections > 0;
+        if (!metadataPending) return;
 
         // Create output buffers
        // labelIDsOutputBuffer = new ComputeBuffer(numDetections, sizeof(int));
@@ -406,9 +425,9 @@ public class YOLOSegmentationRunner : SegmentationRunner
         //int[] labelResults = new int[numDetections];
         //float[] bboxResults = new float[numDetections * 4];
         //float[] scoresResults = new float[numDetections];
-        labelIDsOutputBuffer.GetData(labelIDData);
-        bboxOutputBuffer.GetData(bboxData);
-        scoresOutputBuffer.GetData(scoresData);
+        labelsReadback = AsyncGPUReadback.Request(labelIDsOutputBuffer);
+        boxesReadback = AsyncGPUReadback.Request(bboxOutputBuffer);
+        scoresReadback = AsyncGPUReadback.Request(scoresOutputBuffer);
         // Create new native arrays
         //bboxData = new NativeArray<float>(bboxResults, Allocator.Persistent);
         //labelIDData = new NativeArray<int>(labelResults, Allocator.Persistent);
@@ -418,23 +437,22 @@ public class YOLOSegmentationRunner : SegmentationRunner
 
     private void PrepareToCPUShader()
     {
-        toCPUShader = Resources.Load<ComputeShader>("Models/YOLO/ToCPU");
+        toCPUShader = Instantiate(Resources.Load<ComputeShader>("Models/YOLO/ToCPU"));
         extractLabelIDsKernel = toCPUShader.FindKernel("ToCPU");
     }
 
 #endregion
     void OnDestroy()
     {
-        if (visualizationTexture != null)
+        // Complete only our outstanding compact requests before releasing their buffers.
+        if (metadataPending)
         {
-            visualizationTexture.Release();
+            labelsReadback.WaitForCompletion();
+            boxesReadback.WaitForCompletion();
+            scoresReadback.WaitForCompletion();
         }
         if (worker != null) worker.Dispose();
-        if (labelIDTensor != null) labelIDTensor.Dispose();
-        if (scoresTensor != null) scoresTensor.Dispose();
         if (inputTensor != null) inputTensor.Dispose();
-        if (bboxTensor != null) bboxTensor.Dispose();
-        if (maskTensor != null) maskTensor.Dispose();
         if (OutputBuffer != null)
         {
             OutputBuffer.Dispose();
@@ -442,6 +460,7 @@ public class YOLOSegmentationRunner : SegmentationRunner
         if (visualizationTexture != null)
         {
             visualizationTexture.Release();
+            Destroy(visualizationTexture);
         }
         if (labelIDsOutputBuffer != null)
         {
@@ -451,6 +470,10 @@ public class YOLOSegmentationRunner : SegmentationRunner
         {
             scoresOutputBuffer.Dispose();
         }
+        if (bboxOutputBuffer != null) bboxOutputBuffer.Dispose();
+        if (instanceSegmentationShader != null) Destroy(instanceSegmentationShader);
+        if (visualizationShader != null) Destroy(visualizationShader);
+        if (toCPUShader != null) Destroy(toCPUShader);
         //if (bboxData.IsCreated) bboxData.Dispose();
         //if (labelIDData.IsCreated) labelIDData.Dispose();
         //if (scoresData.IsCreated) scoresData.Dispose();
@@ -458,9 +481,7 @@ public class YOLOSegmentationRunner : SegmentationRunner
 
     public override void DisposeOutput()
     {
-        if (labelIDTensor != null) labelIDTensor.Dispose();
-        if (bboxTensor != null) bboxTensor.Dispose();
-        if (scoresTensor != null) scoresTensor.Dispose();
+        // PeekOutput tensors belong to Worker and remain valid until its next run.
        // if (bboxData.IsCreated) bboxData.Dispose();
        // if (labelIDData.IsCreated) labelIDData.Dispose();
        // if (scoresData.IsCreated) scoresData.Dispose();

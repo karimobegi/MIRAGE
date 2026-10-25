@@ -69,6 +69,16 @@ We use the [MI-GAN](https://github.com/Picsart-AI-Research/MI-GAN) Inpainting Mo
 2. Replace the `/scripts/create_onnx_pipeline.py` script with our script found in the `Models/MI-GAN/create_onnx_pipeline.py` directory.
 3. Follow the instructions given by the developers on how to export the model to ONNX.
 
+The MI-GAN runner now processes contextual crops around selected objects, preserves the model's input aspect ratio, and composites a full-frame RGBA overlay. Overlapping crops are merged, and `Maximum Crops Per Frame` clusters targets rather than dropping them. `Dilation Pixels` and `Feather Pixels` control mask edges in segmentation-output pixels. Model RGB is converted to/from sRGB in Linear Unity projects.
+
+`Enable Temporal Reuse` enables experimental backward block matching on visible background. A cached fill is reused only when photometric confidence and complete warped-mask coverage pass; otherwise the model runs again. Reuse is bounded by frame count and elapsed time, and history is invalidated on settings changes, source switches, seeks, and input-size changes. It is disabled by default pending validation with your camera and GPU.
+
+#### Moebius quality mode
+
+An alternative `MoebiusRunner` uses the official Moebius model through a local Python process. Setup, pinned checkpoint downloads, image/mask trials, batch comparison reports, and server commands are documented in [Models/Moebius/README.md](Models/Moebius/README.md). The Unity editor menu under `MIRAGE > Inpainting` switches a selected Pipeline between MI-GAN and Moebius while preserving its settings and output UI.
+
+Moebius is a quality comparison mode. Its native diffusion sampler runs outside Unity and requires CUDA PyTorch. It has not been converted to ONNX or claimed to meet the live MI-GAN frame budget. The bridge accepts only a loopback HTTP server and validates the returned frame ID before displaying a result.
+
 ### 3. Setting up Input
 1. Either use a `video` or `Webcam`for input.
 
@@ -85,6 +95,10 @@ We use the [MI-GAN](https://github.com/Picsart-AI-Research/MI-GAN) Inpainting Mo
 5. Add effects to the scene using the `UI.`
     - If you are using a scene without `UI`, refer to the `Effects` section of this README
 6. Changes are saved on the UI toggle.
+
+The pipeline captures an immutable input snapshot for each iteration. With `Run As Sequence` disabled, segmentation and depth execute concurrently on that same snapshot; object-depth reduction and inpainting follow after both complete. Results are displayed together with their original image. The previous completed frame stays visible during processing, and new camera frames replace older unprocessed input rather than accumulating in a queue. When multiple inpainting runners exist, assign the intended `Inpainting Model` explicitly on Pipeline.
+
+Depth Anything 3 Small supplies **relative depth**, not metres. Distance labels show `(relative)` unless a metric model or independently validated calibration is configured explicitly. Effect ranges use the selected depth model's units. Disabling depth estimation applies effects by class alone. Missing, empty, or invalid depth values are excluded from enabled depth filters.
 
 ### Preparing the VR Scene for In-Vehicle XR Usage
 1. Set up Passthrough for Unity for your XR HMD. This step depends on the XR System you're using. Please refer to the respective documentation.
@@ -226,8 +240,14 @@ This section covers benchmark results and instructions for conducting benchmark 
 
 
 
-Note that since the models run independently in the `parallel` pipeline mode, there is no shared total iteration time.
+These archived measurements were collected in September 2025, before the current YOLO26/DA3 stack and synchronized pipeline. Rerun benchmarks before using this table to estimate current performance. In the current concurrent mode, segmentation and depth overlap, so adding their stage durations does not measure an iteration's latency.
 Further, the Unity FPS solely refers to the updated content; passthrough capabilities run without interference at the headset's set frequency (90 Hz for the Varjo 3).
+
+`Pipeline.PublishedFrameId`, `PublishedFrameCount`, `PublishedCaptureTime`, and `LastFrameLatencyMilliseconds` expose processed-frame publication information. The latency value measures source arrival to Unity graphics-queue submission, not physical camera-to-display latency. Depth stage timing includes aligned object reduction and compact readback; postprocessing timing measures submission.
+
+### Implementation checks
+
+Reproducible numerical, source-contract, and Windows HLSL compilation checks are documented in [Tests/README.md](Tests/README.md). These checks do not replace importing the project, running the GPU smoke tests, and validating a scene in Unity with the exported model assets.
 
 
 ### How to Benchmark

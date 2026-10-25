@@ -19,7 +19,8 @@ public class DepthToggle : MonoBehaviour
         else
         {
             depthEstimationRunner.IsEnabled = false;
-            depthEstimationRunner.ResetOutput();
+            // Pipeline resets at the next frame boundary; never release a buffer
+            // while an in-flight GPU reduction or inpainting stage still uses it.
         }
 
     }

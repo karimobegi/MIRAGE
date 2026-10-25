@@ -55,6 +55,9 @@ public class GaussianBlurImagePostProcessor : ImagePostProcessor
     {
 
         if (!IsRunning) return;
+        if (depthEstimationRunner.ObjectDepthBuffer == null) return;
+        Shader.SetInt("_UseDepthFilter", depthEstimationRunner.IsEnabled && depthEstimationRunner.IsPrepared ? 1 : 0);
+        Shader.SetInt("_DepthObjectCapacity", depthEstimationRunner.MaxObjects);
 
         // Set common buffers and parameters
         Shader.SetBuffer(horizontalKernel, "outputArray", segmentationRunner.OutputBuffer);
@@ -99,6 +102,7 @@ public class GaussianBlurImagePostProcessor : ImagePostProcessor
         if (temporaryRT != null)
         {
             temporaryRT.Release();
+            Destroy(temporaryRT);
             temporaryRT = null;
         }
     }

@@ -10,6 +10,21 @@ struct ClassSettings {
 
 StructuredBuffer<ClassSettings> selectedClasses;
 int selectedClassesCount;
+int _UseDepthFilter;
+int _DepthObjectCapacity;
+StructuredBuffer<float> objectDepths;
+
+float ReadObjectDepth(int objectId)
+{
+    float value = -1.0;
+    [branch] if (objectId >= 0 && objectId < _DepthObjectCapacity) value = objectDepths[objectId];
+    return value;
+}
+
+bool IsDepthInRange(float depth, float minimum, float maximum)
+{
+    return _UseDepthFilter == 0 || (isfinite(depth) && depth > 0 && depth >= minimum && depth <= maximum);
+}
 
 bool IsClassSelected(int classIndex)
 {
@@ -27,7 +42,7 @@ bool IsClassSelected(int classId, float depth)
     {
         if (selectedClasses[i].classId == classId)
         {
-            if (depth >= float(selectedClasses[i].minRange) && depth <= float(selectedClasses[i].maxRange))
+            if (IsDepthInRange(depth, selectedClasses[i].minRange, selectedClasses[i].maxRange))
             {
                 return true;
             }
@@ -42,7 +57,7 @@ float4 GetColorForClassAndDepth(int classId, float depth)
     {
         if (selectedClasses[i].classId == classId)
         {
-            if (depth >= float(selectedClasses[i].minRange) && depth <= float(selectedClasses[i].maxRange))
+            if (IsDepthInRange(depth, selectedClasses[i].minRange, selectedClasses[i].maxRange))
             {
                 return selectedClasses[i].color;
             }
@@ -51,4 +66,4 @@ float4 GetColorForClassAndDepth(int classId, float depth)
     return float4(0, 0, 0, 0);
 }
 
-#endif 
+#endif

@@ -1,4 +1,5 @@
 #pragma kernel InstanceSegmentation
+#pragma kernel ClearInstanceMask
 //This shader looks assigns each pixel to the object with the highest mask confidence score and puts in the label ID
 // Input buffers
 StructuredBuffer<float> InputMasks;
@@ -15,7 +16,14 @@ RWStructuredBuffer<int2> OutputBuffer;
 uint MaskWidth;
 uint MaskHeight;
 uint NumMasks;
-float Scale;
+float2 Scale;
+
+[numthreads(8, 8, 1)]
+void ClearInstanceMask(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x < MaskWidth && id.y < MaskHeight)
+        OutputBuffer[id.y * MaskWidth + id.x] = int2(-1, -1);
+}
 
 [numthreads(8, 8, 1)]
 void InstanceSegmentation(uint3 id : SV_DispatchThreadID)
@@ -36,13 +44,13 @@ void InstanceSegmentation(uint3 id : SV_DispatchThreadID)
     {
         // Get bounding box and scale to mask dimensions
         float4 bbox = BoundingBoxes[objectID];
-       // float2 scale = float2(float(MaskWidth) / float(OutputWidth), 
+       // float2 scale = float2(float(MaskWidth) / float(OutputWidth),
          //                   float(MaskHeight) / float(OutputHeight));
-        
+
 
         float2 bboxCenter = float2(bbox.x, bbox.y) * Scale;
         float2 bboxSize = float2(bbox.z, bbox.w) * Scale;
-        
+
         // Calculate bbox bounds
         float2 bboxMin = floor(bboxCenter - bboxSize * 0.5);
         float2 bboxMax = ceil(bboxCenter + bboxSize * 0.5);
@@ -58,7 +66,7 @@ void InstanceSegmentation(uint3 id : SV_DispatchThreadID)
             uint inputIndex = objectID * (MaskWidth * MaskHeight) + flippedY * MaskWidth + id.x;
             float maskValue = InputMasks[inputIndex];
 
-            // If this mask has a higher value 
+            // If this mask has a higher value
             if (maskValue > highestMaskValue)
             {
                 highestMaskValue = maskValue;
@@ -69,4 +77,4 @@ void InstanceSegmentation(uint3 id : SV_DispatchThreadID)
 
     // Write both the mask index and label ID to the output buffer
     OutputBuffer[id.y * MaskWidth + id.x] = winningIDs;
-} 
+}

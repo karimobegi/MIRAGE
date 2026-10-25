@@ -1,23 +1,45 @@
+#pragma kernel InitBounds
 #pragma kernel CreateMask
 
-// Shader that creates a mask for inpainting based on YOLO object detection results
-
-RWStructuredBuffer<uint> ValidObjects;      // Input: Contains 1 for valid objects, 0 for invalid
-RWStructuredBuffer<int2> YOLOMaskBuffer;    // Input: x = object ID, y = class ID
-RWStructuredBuffer<float> MaskBuffer;        // Output: Final mask (1 for pixels to inpaint, 0 otherwise)
-
-uint NumMaskPositions;
+// YOLO's instance buffer is top-left row-major. Textures in this pipeline
+// use bottom-left coordinates; make that conversion exactly once here.
+StructuredBuffer<uint> ValidObjects;
+StructuredBuffer<int2> YOLOMaskBuffer;
+RWStructuredBuffer<uint> ObjectBounds; // minX,minY,maxX,maxY,count per object
+RWTexture2D<float> RawMask;
+uint MaskWidth;
+uint MaskHeight;
+uint NumObjects;
+uint MaxObjects;
 
 [numthreads(64,1,1)]
+void InitBounds(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= MaxObjects) return;
+    uint offset = id.x * 5;
+    ObjectBounds[offset] = MaskWidth;
+    ObjectBounds[offset + 1] = MaskHeight;
+    ObjectBounds[offset + 2] = 0;
+    ObjectBounds[offset + 3] = 0;
+    ObjectBounds[offset + 4] = 0;
+}
+
+[numthreads(8,8,1)]
 void CreateMask(uint3 id : SV_DispatchThreadID)
 {
-    uint index = id.x;
-    if (index >= NumMaskPositions)
-        return;
-    
-    int2 maskInfo = YOLOMaskBuffer[index];
-    int objectId = maskInfo.x;
-    
-    // Set mask value to 0 if objectId is -1, otherwise use ValidObjects value
-    MaskBuffer[index] = (objectId == -1) ? 0 : ValidObjects[objectId];
-} 
+    if (id.x >= MaskWidth || id.y >= MaskHeight) return;
+    int objectId = YOLOMaskBuffer[id.y * MaskWidth + id.x].x;
+    bool valid = objectId >= 0 && objectId < (int)min(NumObjects, MaxObjects);
+    // Do not index a buffer in a compound boolean: shader compilers may
+    // evaluate both sides, including an invalid background object ID.
+    if (valid) valid = ValidObjects[objectId] != 0;
+    uint y = MaskHeight - 1 - id.y;
+    RawMask[uint2(id.x, y)] = valid ? 1.0 : 0.0;
+    if (!valid) return;
+    uint offset = (uint)objectId * 5;
+    InterlockedMin(ObjectBounds[offset], id.x);
+    InterlockedMin(ObjectBounds[offset + 1], y);
+    InterlockedMax(ObjectBounds[offset + 2], id.x);
+    InterlockedMax(ObjectBounds[offset + 3], y);
+    InterlockedAdd(ObjectBounds[offset + 4], 1);
+}

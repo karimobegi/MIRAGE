@@ -1,118 +1,99 @@
-#pragma kernel ObjectDepth
+#pragma kernel ObjectDepthPartial
+#pragma kernel ObjectDepthFinalize
 
-// Input buffers
-StructuredBuffer<int2> SegmentationBuffer; // Object ID and class
-StructuredBuffer<float> DepthBuffer;       // Depth values in meters
+StructuredBuffer<int2> SegmentationBuffer;
+StructuredBuffer<float> DepthBuffer;
+// One independently written record per tile/object: interior sum/count, full sum/count.
+RWStructuredBuffer<float4> PartialDepths;
+RWStructuredBuffer<float> ObjectDepthBuffer;
+uint ImageWidth, ImageHeight, GroupsX, TileCount, ObjectCapacity, NumObjects;
+float DepthScale, DepthOffset, MaximumValidDepth;
+groupshared int tileObjects[64];
+groupshared float tileDepths[64];
+groupshared uint tileInterior[64];
 
-// Output buffer
-RWStructuredBuffer<float> ObjectDepthBuffer; //avg depth per object,
-
-// Image dimensions
-uint ImageWidth;
-uint ImageHeight;
-uint MaxObjectID;
-
-// Add FOV parameter
-float FOVRadians;
-
-float FocalLengthScale = 1.0f;
-
-// Atomic counter for each object (to calculate average)
-// We use uint2 instead of float2 because InterlockedAdd only works with integers
-// x: minimum depth (as fixed-point integer), y: unused (kept for structure compatibility)
-// x: total depth (as fixed-point integer), y: count of pixels
-groupshared uint2 objectSums[256];    
-
-float CalculateDistanceCorrection(uint2 id) {
-    // Convert pixel coordinates to normalized device coordinates (-1 to 1)
-    float2 normalizedPos = float2(id.x / float(ImageWidth), id.y / float(ImageHeight)) * 2.0 - 1.0;
-    
-    // Calculate distance from center in normalized space
-    float distanceFromCenter = length(normalizedPos);
-    
-    // Calculate the angle using normalized coordinates
-    float angleFromCenter = atan(distanceFromCenter * tan(FOVRadians * 0.5f));
-    
-    // Correct for perspective projection
-    return 1.0f / cos(angleFromCenter);
+bool IsInterior(uint2 pixel, int objectId)
+{
+    // One-pixel cross erosion rejects uncertain segmentation boundaries.
+    if (pixel.x == 0 || pixel.y == 0 || pixel.x + 1 >= ImageWidth || pixel.y + 1 >= ImageHeight)
+        return false;
+    uint index = pixel.y * ImageWidth + pixel.x;
+    return SegmentationBuffer[index - 1].x == objectId
+        && SegmentationBuffer[index + 1].x == objectId
+        && SegmentationBuffer[index - ImageWidth].x == objectId
+        && SegmentationBuffer[index + ImageWidth].x == objectId;
 }
 
-[numthreads(8,8,1)]
-void ObjectDepth (uint3 id : SV_DispatchThreadID, uint3 groupId : SV_GroupID, uint3 localId : SV_GroupThreadID)
+[numthreads(8, 8, 1)]
+void ObjectDepthPartial(uint3 id : SV_DispatchThreadID, uint3 groupId : SV_GroupID, uint3 localId : SV_GroupThreadID)
 {
-    const uint threadCount = 64; // 8x8 threads
-    uint threadIdx = localId.y * 8 + localId.x;
+    uint lane = localId.y * 8 + localId.x;
+    uint tileOffset = (groupId.y * GroupsX + groupId.x) * ObjectCapacity;
+    // Clear this tile only. No workgroup scans/writes another tile's pixels.
+    for (uint obj = lane; obj < NumObjects; obj += 64)
+        PartialDepths[tileOffset + obj] = 0;
 
-    // Each thread initializes exactly 4 elements (256/64 = 4)
-    objectSums[threadIdx] = uint2(0xFFFFFFFF, 0);
-    objectSums[threadIdx + threadCount] = uint2(0xFFFFFFFF, 0);
-    objectSums[threadIdx + (threadCount * 2)] = uint2(0xFFFFFFFF, 0);
-    objectSums[threadIdx + (threadCount * 3)] = uint2(0xFFFFFFFF, 0);
-    /*objectSums[threadIdx] = uint2(0, 0);
-    objectSums[threadIdx + threadCount] = uint2(0, 0);
-    objectSums[threadIdx + (threadCount * 2)] = uint2(0, 0);
-    objectSums[threadIdx + (threadCount * 3)] = uint2(0, 0);*/
-    GroupMemoryBarrierWithGroupSync();
-
-    // Calculate total number of pixels
-    uint totalPixels = ImageWidth * ImageHeight;
-    
-    // Each thread processes multiple pixels
-    uint pixelsPerThread = (totalPixels + 63) / 64; // Round up division
-    uint startPixel = threadIdx * pixelsPerThread;
-    uint endPixel = min(startPixel + pixelsPerThread, totalPixels);
-
-    // Process assigned pixels
-    for (uint i = startPixel; i < endPixel; i++)
+    int objectId = -1;
+    float depth = 0;
+    uint interior = 0;
+    if (id.x < ImageWidth && id.y < ImageHeight)
     {
-        int2 segmentation = SegmentationBuffer[i];
-        
-        // Calculate 2D coordinates from linear index
-        uint x = i % ImageWidth;
-        uint y = i / ImageWidth;
-        // Flip y coordinate for depth buffer
-        uint flippedIndex = x + ( /*ImageHeight - 1 -*/ y) * ImageWidth;
-        
-        float depth = DepthBuffer[flippedIndex];
-        // Apply depth correction based on distance from center
-        float correction = CalculateDistanceCorrection(int2(x, y));
-        depth *= FocalLengthScale;
-        depth *= correction;
-        
-        int objectId = segmentation.x;
-        
-        if (objectId >= 0 && objectId < MaxObjectID)
+        uint index = id.y * ImageWidth + id.x;
+        int candidate = SegmentationBuffer[index].x;
+        float candidateDepth = DepthBuffer[index];
+        if (candidate >= 0 && candidate < (int)NumObjects && isfinite(candidateDepth)
+            && candidateDepth > 0 && candidateDepth <= MaximumValidDepth)
         {
-            uint fixedPointDepth = uint(depth * 1000.0);
-            // Use InterlockedMin instead of InterlockedAdd to track minimum value
-            InterlockedMin(objectSums[objectId].x, fixedPointDepth);
-            // Use InterlockedAdd to accumulate total depth
-            //InterlockedAdd(objectSums[objectId].x, fixedPointDepth);
-            // Increment the count of pixels for this object
-            InterlockedAdd(objectSums[objectId].y, 1);
+            objectId = candidate;
+            depth = candidateDepth;
+            interior = IsInterior(id.xy, objectId) ? 1 : 0;
         }
     }
-    
-    GroupMemoryBarrierWithGroupSync();
-
-    // Have one thread per group write results
-    if (localId.x == 0 && localId.y == 0)
+    tileObjects[lane] = objectId;
+    tileDepths[lane] = depth;
+    tileInterior[lane] = interior;
+    AllMemoryBarrierWithGroupSync();
+    if (objectId < 0)
+        return;
+    // First lane for an object owns its tile record: no float atomics/racing writes.
+    for (uint previous = 0; previous < lane; previous++)
+        if (tileObjects[previous] == objectId)
+            return;
+    float4 sums = 0;
+    for (uint other = 0; other < 64; other++)
     {
-        for (uint objId = 0; objId < MaxObjectID; objId++)
+        if (tileObjects[other] != objectId)
+            continue;
+        sums.z += tileDepths[other];
+        sums.w += 1;
+        if (tileInterior[other] != 0)
         {
-            // Check if we have any depth value (non-zero means we found at least one pixel)
-            if (objectSums[objId].x > 0)
-            //if (objectSums[objId].y > 0)
-            {
-                // Convert back from fixed-point to floating point
-                // Only divide by 1000.0 to convert back to meters (no averaging needed)
-                float minDepth = float(objectSums[objId].x) / 1000.0;
-                ObjectDepthBuffer[objId] = minDepth;
-
-                // Calculate average depth
-              //  float avgDepth = float(objectSums[objId].x) / float(objectSums[objId].y) / 1000.0;
-               // ObjectDepthBuffer[objId] = avgDepth;
-            }
+            sums.x += tileDepths[other];
+            sums.y += 1;
         }
     }
-} 
+    PartialDepths[tileOffset + objectId] = sums;
+}
+
+[numthreads(64, 1, 1)]
+void ObjectDepthFinalize(uint3 id : SV_DispatchThreadID)
+{
+    uint objectId = id.x;
+    if (objectId >= ObjectCapacity)
+        return;
+    // NaN fails range comparisons and cannot masquerade as zero metres.
+    float invalidDepth = asfloat(0x7FC00000u);
+    if (objectId >= NumObjects)
+    {
+        ObjectDepthBuffer[objectId] = invalidDepth;
+        return;
+    }
+    float4 sums = 0;
+    for (uint tile = 0; tile < TileCount; tile++)
+        sums += PartialDepths[tile * ObjectCapacity + objectId];
+    // Interior mean reduces edge contamination; thin objects use full-mask mean.
+    float count = sums.y > 0 ? sums.y : sums.w;
+    float total = sums.y > 0 ? sums.x : sums.z;
+    float depth = count > 0 ? (total / count) * DepthScale + DepthOffset : invalidDepth;
+    ObjectDepthBuffer[objectId] = isfinite(depth) && depth > 0 ? depth : invalidDepth;
+}

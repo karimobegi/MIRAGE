@@ -1,320 +1,298 @@
+using System;
 using System.Collections;
+using System.Collections.Generic;
+using System.Linq;
+using ByteTrackCSharp;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
-using ByteTrackCSharp;
-using System.Linq;
-using System.Collections.Generic;
 
 /// <summary>
-/// Main Script that initializes and executes the pipeline
-/// 
-/// Author: J-Britten
+/// Processes an immutable camera snapshot. Segmentation and depth may overlap,
+/// but their buffers remain unchanged until all dependent effects finish.
+/// The previous complete frame stays on screen during the next inference.
 /// </summary>
 public class Pipeline : MonoBehaviour
 {
-    public bool RunAsSequence = false;
-
+    public bool RunAsSequence;
     public RawImage OutputImage;
     public RawImage PostProcessingOutputImage;
     public RawImage ImagePostprocessingOutputImage;
-
     public RectTransform CPUPostProcessingContainer;
     public TMP_Text segmentationTimeText;
     public TMP_Text depthEstimationTimeText;
     public TMP_Text inpaintingTimeText;
     public TMP_Text postProcessingTimeText;
 
-    private YOLOSegmentationRunner segmentationModel;
-    private DepthEstimationRunner depthModel;
-    private InpaintingRunner inpaintingModel;
+    [SerializeField] private YOLOSegmentationRunner segmentationModel;
+    [SerializeField] private DepthEstimationRunner depthModel;
+    [SerializeField] private InpaintingRunner inpaintingModel;
+    public InpaintingRunner ActiveInpaintingModel => inpaintingModel;
 
-    private CPUPostProcessor[] cpuPostProcessors; 
-    
+    public long PublishedFrameId { get; private set; } = -1;
+    public double PublishedCaptureTime { get; private set; }
+    // Source arrival to graphics-queue publication, not physical display latency.
+    public double LastFrameLatencyMilliseconds { get; private set; }
+    public long PublishedFrameCount { get; private set; }
+
+    private CPUPostProcessor[] cpuPostProcessors;
     private PostProcessor[] gpuPostProcessors;
-    private RenderTexture postProcessingOverlay;
-    private RenderTexture imagePostProcessingOverlay;
-    private RenderTexture inputTexture { get => CameraInput.Instance.CurrentFrame; }
-
-    // Benchmark integration
+    private RenderTexture postProcessingOverlay, imagePostProcessingOverlay;
+    private RenderTexture processingFrame, presentedFrame, presentedInpainting;
     private IBenchmarkManager benchmarkManager;
-
     private BYTETracker tracker;
-    public List<LabelledSTrack> labelledTracks;
+    public List<LabelledSTrack> labelledTracks = new List<LabelledSTrack>();
+    private long lastSourceVersion = -1;
+    private long lastConsumedFrame = -1;
+    private CameraInput lastSource;
+    private double depthStartedAt;
 
-#region Initialization
-    void Awake()
-    {     
-       InitializePipeline();
-    }
-
-    void Start()
+    private void Awake()
     {
-        if (RunAsSequence)
+        if (segmentationModel == null) segmentationModel = FindAnyObjectByType<YOLOSegmentationRunner>();
+        if (depthModel == null) depthModel = FindAnyObjectByType<DepthEstimationRunner>();
+        if (inpaintingModel == null)
         {
-            benchmarkManager.SetParallelMode(false);
-            StartCoroutine(RunSequentialPipeline());
-        } else {
-            benchmarkManager.SetParallelMode(true);
-            StartCoroutine(RunSegmentation());
-            StartCoroutine(RunDepthEstimation());
-            StartCoroutine(RunInpainting());
-            StartCoroutine(RunPostProcessing());
+            var candidates = FindObjectsByType<InpaintingRunner>(FindObjectsSortMode.None)
+                .Where(r => r.enabled).ToArray();
+            if (candidates.Length == 1) inpaintingModel = candidates[0];
+            else if (candidates.Length > 1)
+                Debug.LogError("Assign the desired Inpainting Model on Pipeline when multiple runners are enabled.", this);
         }
     }
 
-    /// <summary>
-    /// Initialize the pipeline
-    /// </summary>
-    private void InitializePipeline()
+    private void Start()
     {
-        //Find the models
-        segmentationModel = FindAnyObjectByType<YOLOSegmentationRunner>();
-        inpaintingModel = FindAnyObjectByType<InpaintingRunner>();
-        depthModel = FindAnyObjectByType<DepthEstimationRunner>();
-
-        //Setup render textures
-        postProcessingOverlay = new RenderTexture(segmentationModel.OutputWidth, segmentationModel.OutputHeight, 0, UnityEngine.Experimental.Rendering.GraphicsFormat.R8G8B8A8_UNorm);
-        postProcessingOverlay.enableRandomWrite = true;
-        postProcessingOverlay.Create();
-
-        imagePostProcessingOverlay = new RenderTexture(segmentationModel.ImageWidth, segmentationModel.ImageHeight, 0, UnityEngine.Experimental.Rendering.GraphicsFormat.R8G8B8A8_UNorm);
-        imagePostProcessingOverlay.enableRandomWrite = true;
-        imagePostProcessingOverlay.Create();
-
-        //Initialize postprocessors
-        if (segmentationModel is YOLOSegmentationRunner)
+        // Every runner Awake has finished before we access its prepared buffers.
+        if (segmentationModel == null || !segmentationModel.IsPrepared || depthModel == null)
         {
-            cpuPostProcessors = FindObjectsByType<CPUPostProcessor>(FindObjectsSortMode.None);
-            foreach (var processor in cpuPostProcessors)
-            {
-                processor.Initialize(segmentationModel as YOLOSegmentationRunner, depthModel, CPUPostProcessingContainer, this);
-            }
+            Debug.LogError("Pipeline needs a prepared segmentation model and a depth runner.", this);
+            enabled = false;
+            return;
         }
-
+        if (depthModel.OutputWidth != segmentationModel.OutputWidth || depthModel.OutputHeight != segmentationModel.OutputHeight)
+        {
+            Debug.LogError("Depth and segmentation output dimensions must match for per-object depth.", this);
+            enabled = false;
+            return;
+        }
+        postProcessingOverlay = CreateTexture(segmentationModel.OutputWidth, segmentationModel.OutputHeight, "MIRAGE effects");
+        imagePostProcessingOverlay = CreateTexture(segmentationModel.ImageWidth, segmentationModel.ImageHeight, "MIRAGE image effects");
+        processingFrame = CreateTexture(segmentationModel.ImageWidth, segmentationModel.ImageHeight, "MIRAGE processing frame");
+        presentedFrame = CreateTexture(segmentationModel.ImageWidth, segmentationModel.ImageHeight, "MIRAGE presented frame");
+        if (inpaintingModel != null)
+        {
+            inpaintingModel.PublishOutputToUI = false;
+            presentedInpainting = CreateTexture(inpaintingModel.OutputWidth, inpaintingModel.OutputHeight, "MIRAGE published inpainting");
+            if (inpaintingModel.OutputImage != null) inpaintingModel.OutputImage.texture = presentedInpainting;
+        }
+        cpuPostProcessors = FindObjectsByType<CPUPostProcessor>(FindObjectsSortMode.None);
+        foreach (var processor in cpuPostProcessors)
+            processor.Initialize(segmentationModel, depthModel, CPUPostProcessingContainer, this);
         gpuPostProcessors = FindObjectsByType<PostProcessor>(FindObjectsSortMode.None);
-        foreach (var processor in FindObjectsByType<PostProcessor>(FindObjectsSortMode.None))
-        {
+        foreach (var processor in gpuPostProcessors)
+            processor.Initialize(segmentationModel, depthModel,
+                processor is ImagePostProcessor ? imagePostProcessingOverlay : postProcessingOverlay);
 
-            if (processor is ImagePostProcessor)
+        var manager = FindAnyObjectByType<BenchmarkManager>();
+        benchmarkManager = manager != null ? manager : new NullBenchmarkManager();
+        benchmarkManager.SetParallelMode(!RunAsSequence);
+        ResetTracking();
+        StartCoroutine(RunPipeline());
+    }
+
+    private IEnumerator RunPipeline()
+    {
+        while (enabled)
+        {
+            var source = CameraInput.Instance;
+            if (source == null || !source.HasFrame || source.CurrentFrame == null ||
+                (source == lastSource && source.SourceVersion == lastSourceVersion && source.FrameId == lastConsumedFrame))
             {
-                var imageProcessor = processor as ImagePostProcessor;
-                imageProcessor.Initialize(segmentationModel, depthModel, imagePostProcessingOverlay);
+                yield return null;
+                continue;
+            }
+            if (source != lastSource || source.SourceVersion != lastSourceVersion)
+            {
+                lastSource = source;
+                lastSourceVersion = source.SourceVersion;
+                ResetTracking();
+                depthModel.ResetOutput();
+                if (inpaintingModel != null) inpaintingModel.ResetHistory();
+            }
+            long frameId = source.FrameId;
+            long sourceVersion = source.SourceVersion;
+            double capturedAt = source.FrameTimestamp;
+            lastConsumedFrame = frameId;
+            Graphics.Blit(source.CurrentFrame, processingFrame);
+            segmentationModel.SetInputFrame(frameId, capturedAt);
+            depthModel.SetInputFrame(frameId, capturedAt);
+            bool useDepth = depthModel.IsEnabled && depthModel.IsPrepared;
+            if (!useDepth) depthModel.ResetOutput();
+            benchmarkManager.StartIteration();
+
+            if (RunAsSequence)
+            {
+                yield return RunSegmentation(processingFrame);
+                if (useDepth) yield return RunDepth(processingFrame);
             }
             else
             {
-                processor.Initialize(segmentationModel, depthModel, postProcessingOverlay);
-            }
-        }        // Initialize Benchmark Manager
-        var benchmarkManagerComponent = FindAnyObjectByType<BenchmarkManager>();
-        benchmarkManager = benchmarkManagerComponent != null ? benchmarkManagerComponent : new NullBenchmarkManager(); //Null Object Pattern
-
-        tracker = new BYTETracker(obj => new LabelledSTrack(obj.rect, obj.prob, obj.label, obj.detection));
-        labelledTracks = new List<LabelledSTrack>();
-    }
-#endregion
-
-#region Object Tracking Function
-    private void getTracks(){
-        float[] bboxes = segmentationModel.BBoxes;
-        int[] labelIDs = segmentationModel.LabelIDs;
-        float[] scores = segmentationModel.Scores; 
-        List<ByteTrackCSharp.Object> objects = new List<ByteTrackCSharp.Object>();
-
-        for(int i = 0; i < segmentationModel.NumObjDetected; i++){
-            float cx = bboxes[i * 4 + 0];
-            float cy = bboxes[i * 4 + 1];
-            float w  = bboxes[i * 4 + 2];
-            float h  = bboxes[i * 4 + 3];
-            var rect = new ByteTrackCSharp.Rect(cx - w / 2f, cy - h / 2f, w, h);
-
-            int label = labelIDs[i];
-            float score = scores[i];
-            int detection = i;
-            objects.Add(new ByteTrackCSharp.Object(rect, label, score, detection));
+                bool segmentationDone = false, depthDone = !useDepth;
+                StartCoroutine(Complete(RunSegmentation(processingFrame), () => segmentationDone = true));
+                if (useDepth) StartCoroutine(Complete(RunDepth(processingFrame), () => depthDone = true));
+                while (!segmentationDone || !depthDone) yield return null;
             }
 
-            List<STrack> tracks = tracker.update(objects);
-            labelledTracks = tracks.Cast<LabelledSTrack>().ToList();
-    }
-#endregion
-
-#region Parallel Execution
-    private IEnumerator RunSegmentation()
-    {
-        while (true)
-        {
-            // Start segmentation timing
-            benchmarkManager.StartSegmentation();
-
-            float startTime = Time.realtimeSinceStartup;
-            yield return segmentationModel.RunModel(inputTexture);
-
-            getTracks();
-
-            float endTime = Time.realtimeSinceStartup;
-            float deltaTime = endTime - startTime;
-
-            // End segmentation timing
-            benchmarkManager.EndSegmentation();
-
-            segmentationTimeText.text = "Segmentation Time: " + deltaTime.ToString("F4") + "s\nFPS: " + (1.0f / deltaTime).ToString("F2");
-        }
-    }
-
-    private IEnumerator RunDepthEstimation()
-    {
-
-        while (true)
-        {
-            if (depthModel.IsEnabled)
+            // No next segmentation starts while downstream models read its buffers.
+            if (segmentationModel.OutputFrameId != frameId)
             {
-                // Start depth estimation timing
-                benchmarkManager.StartDepthEstimation();
-
-                float startTime = Time.realtimeSinceStartup;
-                yield return depthModel.RunModel(inputTexture);
-                depthModel.CalculateObjectDepths(segmentationModel.OutputBuffer, segmentationModel.NumObjDetected);
-                float endTime = Time.realtimeSinceStartup;
-                float deltaTime = endTime - startTime;
-
-                // End depth estimation timing
+                benchmarkManager.EndIteration();
+                yield return null;
+                continue;
+            }
+            if (useDepth)
+            {
+                if (depthModel.OutputFrameId == frameId)
+                    yield return depthModel.CalculateObjectDepthsAsync(segmentationModel.OutputBuffer, segmentationModel.NumObjDetected);
+                else depthModel.ResetOutput();
+                SetTiming(depthEstimationTimeText, "Depth including aligned object reduction", depthStartedAt);
                 benchmarkManager.EndDepthEstimation();
-
-                depthEstimationTimeText.text = "Depth Estimation Time: " + deltaTime.ToString("F4") + "s\nFPS: " + (1.0f / deltaTime).ToString("F2");
             }
-            else
-            {
-                yield return null;
-            }
-        }
-    }
+            UpdateTracks();
 
-    private IEnumerator RunInpainting()
-    {
-        while (true)
-        {
-            if (inpaintingModel.IsEnabled)
+            bool didInpaint = inpaintingModel != null && inpaintingModel.IsEnabled && inpaintingModel.IsPrepared;
+            if (didInpaint)
             {
-                // Start inpainting timing
+                inpaintingModel.SetInputFrame(frameId, capturedAt);
+                inpaintingModel.UseDepthFilter = useDepth;
                 benchmarkManager.StartInpainting();
-
-                float startTime = Time.realtimeSinceStartup;
-                yield return inpaintingModel.RunModel(inputTexture, segmentationModel as YOLOSegmentationRunner, depthModel.ObjectDepthBuffer);
-                float endTime = Time.realtimeSinceStartup;
-                float deltaTime = endTime - startTime;
-
-                // End inpainting timing
+                double startedAt = Time.realtimeSinceStartupAsDouble;
+                yield return inpaintingModel.RunModel(processingFrame, segmentationModel, depthModel.ObjectDepthBuffer);
+                SetTiming(inpaintingTimeText, "Inpainting", startedAt);
                 benchmarkManager.EndInpainting();
+                didInpaint = inpaintingModel.OutputFrameId == frameId;
+            }
 
-                inpaintingTimeText.text = "Inpainting Time: " + deltaTime.ToString("F4") + "s\nFPS: " + (1.0f / deltaTime).ToString("F2");
-            }
-            else
+            // A seek/source switch invalidates the whole in-flight frame.
+            if (source != CameraInput.Instance || source.SourceVersion != sourceVersion)
             {
+                benchmarkManager.EndIteration();
                 yield return null;
+                continue;
             }
-        }
-    }    private IEnumerator RunPostProcessing()
-    {
-        while (true)
-        {
-            PostProcessing();
+            var previous = presentedFrame;
+            presentedFrame = processingFrame;
+            processingFrame = previous;
+            if (presentedInpainting != null)
+            {
+                if (didInpaint && inpaintingModel.OutputTexture != null)
+                    Graphics.Blit(inpaintingModel.OutputTexture, presentedInpainting);
+                else Clear(presentedInpainting);
+                if (inpaintingModel.OutputImage != null) inpaintingModel.OutputImage.texture = presentedInpainting;
+            }
+            PostProcessing(presentedFrame);
+            PublishedFrameId = frameId;
+            PublishedCaptureTime = capturedAt;
+            LastFrameLatencyMilliseconds = (Time.realtimeSinceStartupAsDouble - capturedAt) * 1000.0;
+            PublishedFrameCount++;
+            benchmarkManager.EndIteration();
             yield return null;
         }
     }
 
-#endregion
-
-#region Sequential Execution
-    float inferenceTime;    
-    private IEnumerator RunSequentialPipeline()
+    private IEnumerator RunSegmentation(Texture frame)
     {
-        while (true)
-        {
-            // Start iteration timing for benchmark
-            benchmarkManager.StartIteration();
-            
-            RenderTexture.active = null;  // Reset active render texture
-            inferenceTime = Time.realtimeSinceStartup;
-
-            // Segmentation
-            benchmarkManager.StartSegmentation();
-            yield return StartCoroutine(segmentationModel.RunModel(inputTexture));
-            benchmarkManager.EndSegmentation();
-            getTracks();
-
-            // Depth Estimation
-            if (depthModel.IsEnabled)
-            {
-                benchmarkManager.StartDepthEstimation();
-                yield return StartCoroutine(depthModel.RunModel(inputTexture));
-                depthModel.CalculateObjectDepths(segmentationModel.OutputBuffer, segmentationModel.NumObjDetected);
-                benchmarkManager.EndDepthEstimation();
-            }
-
-            // Inpainting
-            if (inpaintingModel.IsEnabled)
-            {
-                benchmarkManager.StartInpainting();
-                yield return StartCoroutine(inpaintingModel.RunModel(inputTexture, segmentationModel as YOLOSegmentationRunner, depthModel.ObjectDepthBuffer));
-                benchmarkManager.EndInpainting();
-            }            // Post Processing
-            PostProcessing();
-            
-            segmentationModel.DisposeOutput();
-            var speed = Time.realtimeSinceStartup - inferenceTime;
-            segmentationTimeText.text = "Inference Speed: " + speed.ToString("F4") + "s\n" + "FPS: " + (1.0f / speed).ToString("F2");
-            
-            // End iteration timing for benchmark
-            benchmarkManager.EndIteration();
-        }
+        benchmarkManager.StartSegmentation();
+        double start = Time.realtimeSinceStartupAsDouble;
+        yield return segmentationModel.RunModel(frame);
+        SetTiming(segmentationTimeText, "Segmentation", start);
+        benchmarkManager.EndSegmentation();
     }
-#endregion
 
-
-    /// <summary>
-    /// Execute Post Processing effects
-    /// </summary>
-    private void PostProcessing()
+    private IEnumerator RunDepth(Texture frame)
     {
-        // Start post-processing timing
-        benchmarkManager.StartPostProcessing();
+        benchmarkManager.StartDepthEstimation();
+        depthStartedAt = Time.realtimeSinceStartupAsDouble;
+        yield return depthModel.RunModel(frame);
+        // Reduction/readback closes this interval after both independent models finish.
+    }
 
-        float startTime = Time.realtimeSinceStartup;
-        RenderTexture.active = null;
-        RenderTexture.active = postProcessingOverlay;
-        GL.Clear(true, true, Color.clear);
-        RenderTexture.active = imagePostProcessingOverlay;
-        GL.Clear(true, true, Color.clear);
+    private static IEnumerator Complete(IEnumerator stage, Action done)
+    {
+        try { yield return stage; }
+        finally { done(); }
+    }
 
-        foreach (var processor in gpuPostProcessors)
-        {   
-            if (processor is ImagePostProcessor) {
-                var imageProcessor = processor as ImagePostProcessor;
-                imageProcessor.ExecuteShader(inputTexture);
-            }
-            else {
-                processor.ExecuteShader();
-            }
-        }
+    private void ResetTracking()
+    {
+        tracker = new BYTETracker(o => new LabelledSTrack(o.rect, o.prob, o.label, o.detection));
+        labelledTracks.Clear();
+    }
 
-
-        foreach (var processor in cpuPostProcessors)
+    private void UpdateTracks()
+    {
+        var objects = new List<ByteTrackCSharp.Object>(segmentationModel.NumObjDetected);
+        var boxes = segmentationModel.BBoxes;
+        for (int i = 0; i < segmentationModel.NumObjDetected; i++)
         {
-            processor.Execute();
+            float w = boxes[i * 4 + 2], h = boxes[i * 4 + 3];
+            objects.Add(new ByteTrackCSharp.Object(new ByteTrackCSharp.Rect(boxes[i * 4] - w / 2f,
+                boxes[i * 4 + 1] - h / 2f, w, h), segmentationModel.LabelIDs[i], segmentationModel.Scores[i], i));
         }
+        labelledTracks = tracker.update(objects).Cast<LabelledSTrack>().ToList();
+    }
 
-
-        OutputImage.texture = inputTexture;
-        PostProcessingOutputImage.texture = postProcessingOverlay;
-        ImagePostprocessingOutputImage.texture = imagePostProcessingOverlay;
-
-        float endTime = Time.realtimeSinceStartup;
-        float deltaTime = endTime - startTime;
-        postProcessingTimeText.text = "Post Processing Time: " + deltaTime.ToString("F4") + "s\nFPS: " + (1.0f / deltaTime).ToString("F2");
-
-        // End post-processing timing
+    private void PostProcessing(RenderTexture frame)
+    {
+        benchmarkManager.StartPostProcessing();
+        double start = Time.realtimeSinceStartupAsDouble;
+        Clear(postProcessingOverlay);
+        Clear(imagePostProcessingOverlay);
+        foreach (var processor in gpuPostProcessors)
+        {
+            if (processor is ImagePostProcessor imageProcessor) imageProcessor.ExecuteShader(frame);
+            else processor.ExecuteShader();
+        }
+        foreach (var processor in cpuPostProcessors) processor.Execute();
+        if (OutputImage != null) OutputImage.texture = frame;
+        if (PostProcessingOutputImage != null) PostProcessingOutputImage.texture = postProcessingOverlay;
+        if (ImagePostprocessingOutputImage != null) ImagePostprocessingOutputImage.texture = imagePostProcessingOverlay;
+        SetTiming(postProcessingTimeText, "Post processing submission", start);
         benchmarkManager.EndPostProcessing();
     }
 
+    private static void SetTiming(TMP_Text text, string stage, double start)
+    {
+        if (text != null) text.text = $"{stage}: {(Time.realtimeSinceStartupAsDouble - start) * 1000.0:F1} ms";
+    }
+
+    private static RenderTexture CreateTexture(int width, int height, string label)
+    {
+        var texture = new RenderTexture(width, height, 0, RenderTextureFormat.ARGB32)
+            { name = label, enableRandomWrite = true };
+        texture.Create();
+        Clear(texture);
+        return texture;
+    }
+
+    private static void Clear(RenderTexture texture)
+    {
+        var previous = RenderTexture.active;
+        RenderTexture.active = texture;
+        GL.Clear(false, true, Color.clear);
+        RenderTexture.active = previous;
+    }
+
+    private void OnDestroy()
+    {
+        StopAllCoroutines();
+        if (inpaintingModel != null) inpaintingModel.PublishOutputToUI = true;
+        foreach (var texture in new[] { processingFrame, presentedFrame, presentedInpainting, postProcessingOverlay, imagePostProcessingOverlay })
+        {
+            if (texture == null) continue;
+            texture.Release();
+            Destroy(texture);
+        }
+    }
 }

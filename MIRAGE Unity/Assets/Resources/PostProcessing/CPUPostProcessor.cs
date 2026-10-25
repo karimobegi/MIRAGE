@@ -96,7 +96,7 @@ public abstract class CPUPostProcessor : MonoBehaviour, IEffectHandler
             int activeCount = 0;
             try {
                 foreach(LabelledSTrack track in pipeline.labelledTracks) {
-                    if(IsValidObject(track.Label)) {
+                    if(IsValidObject(track)) {
                         Vector2 position = CalculatePositionWithOffset(track);
                         Vector2 size = CalculateSize(track);
                         position = ApplyLocationOffset(position, size);
@@ -158,13 +158,18 @@ public abstract class CPUPostProcessor : MonoBehaviour, IEffectHandler
             return position + new Vector2(size.x/2 * Location.x, size.y/2 * Location.y);
         }
 
-        protected bool IsValidObject(int objectIndex) {
-            int classId = yolo26.LabelIDs[objectIndex];
-            float depth = depthEstimationRunner.DepthData[objectIndex];
+        protected bool IsValidObject(LabelledSTrack track) {
+            // Class IDs and per-frame detection indices are separate namespaces.
+            int classId = track.Label;
+            if (track.Detection < 0 || track.Detection >= yolo26.NumObjDetected ||
+                yolo26.LabelIDs[track.Detection] != classId) return false;
+            bool useDepth = depthEstimationRunner.IsEnabled && depthEstimationRunner.IsPrepared;
+            float depth = 0f;
+            if (useDepth && !depthEstimationRunner.TryGetDepth(track.Detection, out depth)) return false;
 
             if (classSettingsMap.TryGetValue(classId, out List<PostProcessorSetting> settings)) {
                 foreach (var setting in settings) {
-                    if (depth >= setting.MinRange && depth <= setting.MaxRange) {
+                    if (!useDepth || (depth >= setting.MinRange && depth <= setting.MaxRange)) {
                         return true;
                     }
                 }
@@ -174,11 +179,13 @@ public abstract class CPUPostProcessor : MonoBehaviour, IEffectHandler
 
         protected Color GetColorForObject(LabelledSTrack track) {
             int classId = track.Label;
-            float depth = depthEstimationRunner.DepthData[track.Detection];
+            bool useDepth = depthEstimationRunner.IsEnabled && depthEstimationRunner.IsPrepared;
+            float depth = 0f;
+            if (useDepth && !depthEstimationRunner.TryGetDepth(track.Detection, out depth)) return Color.clear;
 
             if (classSettingsMap.TryGetValue(classId, out List<PostProcessorSetting> settings)) {
                 foreach (var setting in settings) {
-                    if (depth >= setting.MinRange && depth <= setting.MaxRange) {
+                    if (!useDepth || (depth >= setting.MinRange && depth <= setting.MaxRange)) {
                         return setting.color;
                     }
                 }

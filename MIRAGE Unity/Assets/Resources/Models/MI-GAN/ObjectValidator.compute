@@ -1,44 +1,43 @@
 #pragma kernel ValidateObjects
 
-// Shader that filters objects based on their class ID and depth range for inpainting
-
 struct InpaintingSetting {
-    uint ClassId;
+    int ClassId;
     float MinDepth;
     float MaxDepth;
 };
 
 // Input buffers
-RWStructuredBuffer<uint> ClassIds;
-RWStructuredBuffer<float> DepthBuffer;
-RWStructuredBuffer<InpaintingSetting> SelectedClasses;
+StructuredBuffer<uint> ClassIds;
+StructuredBuffer<float> DepthBuffer;
+StructuredBuffer<InpaintingSetting> SelectedClasses;
 // Output buffer
 RWStructuredBuffer<uint> ValidObjects;
 
 uint NumObjects;
+uint MaxObjects;
 uint NumSelectedClasses;
-
-bool IsObjectValid(uint classId, float depth) {
-    for(uint i = 0; i < NumSelectedClasses; i++) {
-        InpaintingSetting setting = SelectedClasses[i];
-        if(setting.ClassId == classId && 
-           depth >= setting.MinDepth && 
-           depth <= setting.MaxDepth) {
-            return true;
-        }
-    }
-    return false;
-}
+int UseDepthFilter;
 
 [numthreads(64,1,1)]
 void ValidateObjects(uint3 id : SV_DispatchThreadID)
 {
     uint index = id.x;
+    if (index >= MaxObjects) return;
+    ValidObjects[index] = 0;
     if (index >= NumObjects) return;
-    
     uint classId = ClassIds[index];
-    float depth = DepthBuffer[index];
-    
-    // Set validity in output buffer
-    ValidObjects[index] = IsObjectValid(classId, depth) ? 1 : 0;
-} 
+    if ((int)classId < 0) return;
+    float depth = 0;
+    if (UseDepthFilter != 0) {
+        depth = DepthBuffer[index];
+        if (!isfinite(depth) || depth <= 0) return;
+    }
+    for (uint i = 0; i < NumSelectedClasses; i++) {
+        InpaintingSetting setting = SelectedClasses[i];
+        if (setting.ClassId == (int)classId &&
+            (UseDepthFilter == 0 || (depth >= setting.MinDepth && depth <= setting.MaxDepth))) {
+            ValidObjects[index] = 1;
+            return;
+        }
+    }
+}

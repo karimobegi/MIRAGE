@@ -4,7 +4,6 @@
 
 RWTexture2D<float4> Result;
 StructuredBuffer<int2> outputArray; // Array of object IDs and class IDs, produced by YOLO. See the SegmentationRunner.cs script for details.
-StructuredBuffer<float> objectDepths;
 int width;
 int height;
 
@@ -29,11 +28,11 @@ void CSMain (uint3 id : SV_DispatchThreadID)
     
     if (IsClassSelected(classId))
     {
-        float depth = objectDepths[objectId];
+        float depth = ReadObjectDepth(objectId);
         Result[coord] = GetColorForClassAndDepth(classId, depth);
     }
     /*else
     {
         Result[coord] = float4(0, 0, 0, 0); // Transparent for non-selected classes
     }*/
-} 
+}

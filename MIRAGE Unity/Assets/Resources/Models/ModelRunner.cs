@@ -1,10 +1,8 @@
 using System;
 using System.Collections;
 
-using UnityEditor.EditorTools;
 using UnityEngine;
 using UnityEngine.UI;
-using UnityEngine.XR.ARFoundation.VisualScripting;
 
 /// <summary>
 /// Base class for running a model.
@@ -34,6 +32,7 @@ public abstract class ModelRunner : MonoBehaviour
     private int totalLayers = 20;
 
     [Range(0, 1)]
+    [Tooltip("Fraction of model layers scheduled per rendered frame. Use 1 for the lowest inference latency.")]
     public float UpdateRate = 1f;
 
     public int MaxObjects = 256;
@@ -76,6 +75,20 @@ public abstract class ModelRunner : MonoBehaviour
 
     public bool IsRunning { get { return modelRunning; } }
     public Texture OutputTexture { get { return outputTexture; } }
+    [NonSerialized] public bool PublishOutputToUI = true;
+
+    // A result is only published with the immutable camera snapshot it belongs to.
+    protected long InputFrameId { get; private set; } = -1;
+    protected double InputCapturedAt { get; private set; }
+    public long OutputFrameId { get; protected set; } = -1;
+    public bool IsPrepared { get; private set; }
+    protected virtual bool UsesInferenceEngine => true;
+
+    public void SetInputFrame(long frameId, double capturedAt)
+    {
+        InputFrameId = frameId;
+        InputCapturedAt = capturedAt;
+    }
 
 
 
@@ -170,22 +183,42 @@ public abstract class ModelRunner : MonoBehaviour
 
     protected virtual void Awake()
     {
-        if (InputWidth == 0 || InputHeight == 0 || OutputWidth == 0 || OutputHeight == 0) //Check if the input and output dimensions are valid
+        // Unity calls Awake even on disabled components. Only the selected
+        // backend should load weights or require an assigned ONNX asset.
+        if (enabled) InitializeRunner();
+    }
+
+    protected virtual void OnEnable()
+    {
+        if (!IsPrepared) InitializeRunner();
+    }
+
+    private void InitializeRunner()
+    {
+        if (InputWidth <= 0 || InputHeight <= 0 || OutputWidth <= 0 || OutputHeight <= 0)
         {
             Debug.LogError("Model Runner: Input and Output dimensions must be greater than 0");
-#if UNITY_EDITOR
-            UnityEditor.EditorApplication.isPlaying = false;
-#else
-                Application.Quit();
-#endif
+            enabled = false;
+            return;
+        }
+        if (UsesInferenceEngine && ModelAsset == null)
+        {
+            Debug.LogError($"{name}: assign an ONNX Model Asset before running this model.", this);
+            enabled = false;
             return;
         }
         PrepareModel(); //Prepare the model
+        if (!UsesInferenceEngine)
+        {
+            IsPrepared = true;
+            return;
+        }
         worker = new Unity.InferenceEngine.Worker(runtimeModel, Unity.InferenceEngine.BackendType.GPUCompute);
         // Set the layers per frame to the total number of layers per default
         totalLayers = runtimeModel.layers.Count;
         layersPerFrame = totalLayers;
         SetUpdateRate(UpdateRate); //Set the update rate of the model
+        IsPrepared = true;
     }
 
 
@@ -196,22 +229,28 @@ public abstract class ModelRunner : MonoBehaviour
     protected virtual IEnumerator RunInference()
     {
         modelRunning = true;
-        while (modelRunning)
+        try
         {
-            if (!inferencePending)
+            while (modelRunning)
             {
-                ProcessLayers(); //Process the model layer by layer
+                if (!inferencePending)
+                    ProcessLayers();
+                // GPU-only consumers can enqueue dependent work immediately. Runners
+                // needing CPU metadata explicitly wait for compact async readbacks.
+                if (inferencePending && RequestsDone())
+                {
+                    ReadOutput();
+                    OutputFrameId = InputFrameId;
+                    yield break;
+                }
+                yield return null;
             }
-            else if (inferencePending && RequestsDone()) //Check if the model has finished processing
-            {
-                ReadOutput();
-                modelRunning = false;
-                inferencePending = false;
-                yield break;
-            }
-            yield return null;
         }
-        yield return null;
+        finally
+        {
+            modelRunning = false;
+            inferencePending = false;
+        }
     }
 
     /// <summary>
@@ -220,16 +259,16 @@ public abstract class ModelRunner : MonoBehaviour
     protected void ProcessLayers()
     {
         int i = 0;
-        while (schedule.MoveNext())
+        while (layersPerFrame >= totalLayers || i < layersPerFrame)
         {
-            i++;
-            if (i > layersPerFrame)
+            if (!schedule.MoveNext())
             {
+                PeekOutput();
+                inferencePending = true;
                 return;
             }
+            i++;
         }
-        PeekOutput();
-        inferencePending = true;
     }
 
     /// <summary>
@@ -237,17 +276,18 @@ public abstract class ModelRunner : MonoBehaviour
     /// </summary>
     protected void UpdateOutputImage()
     {
-        if (OutputImage != null)
+        if (PublishOutputToUI && OutputImage != null)
             OutputImage.texture = outputTexture;
     }
 
     /// <summary>
     /// Set the update rate of the model
-    /// Letting the model update less frequently may help with performance
+    /// Smaller values spread layer scheduling across rendered frames, increasing latency.
     /// </summary>
     /// <param name="rate">Value between 0 and 1</param>
     public void SetUpdateRate(float rate) {
         UpdateRate = Mathf.Clamp(rate, 0, 1);
-        layersPerFrame = (int)(totalLayers * UpdateRate);
+        // This control spreads scheduling over frames; even zero must make progress.
+        layersPerFrame = Mathf.Max(1, Mathf.CeilToInt(totalLayers * UpdateRate));
     }
 }

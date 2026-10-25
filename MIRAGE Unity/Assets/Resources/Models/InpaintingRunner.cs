@@ -9,6 +9,12 @@ using UnityEngine;
 /// </summary>
 public abstract class InpaintingRunner : ModelRunner
 {
+    // Disabled depth estimation means class-only effect selection.
+    public bool UseDepthFilter { get; set; } = true;
+
+    /// <summary>Discard cached fills when switching input, seeking, or changing models.</summary>
+    public virtual void ResetHistory() { }
+
     /// <summary>
     /// Run the model with the given input and mask as a buffer
     /// </summary>

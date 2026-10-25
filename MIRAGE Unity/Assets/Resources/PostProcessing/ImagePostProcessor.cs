@@ -38,6 +38,9 @@ public class ImagePostProcessor : PostProcessor, IEffectHandler
     public virtual void ExecuteShader(RenderTexture Input) {
         
        if(!IsRunning) return;
+       if (depthEstimationRunner.ObjectDepthBuffer == null) return;
+       Shader.SetInt("_UseDepthFilter", depthEstimationRunner.IsEnabled && depthEstimationRunner.IsPrepared ? 1 : 0);
+       Shader.SetInt("_DepthObjectCapacity", depthEstimationRunner.MaxObjects);
        Shader.SetBuffer(kernelHandle, "outputArray", segmentationRunner.OutputBuffer);
        Shader.SetTexture(kernelHandle, "InputTexture", Input);
        Shader.SetBuffer(kernelHandle, "objectDepths", depthEstimationRunner.ObjectDepthBuffer);   

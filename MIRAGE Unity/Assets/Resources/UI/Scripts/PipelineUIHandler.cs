@@ -191,7 +191,7 @@ public class PipelineUIHandler : MonoBehaviour
     IEnumerator ModelSettingsSetup() {
         yield return new WaitForSeconds(1f);
         var depthToggle = FindObjectOfType<DepthToggle>();
-        depthToggle.transform.parent.GetComponentInChildren<Slider>().value = 0.1f;
+        depthToggle.transform.parent.GetComponentInChildren<Slider>().value = 1f;
         depth = depthToggle.gameObject.GetComponent<Toggle>();
         depth.isOn = false;
 

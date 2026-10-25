@@ -8,7 +8,6 @@ Texture2D<float4> InputTexture;
 
 // Buffers for segmentation data
 StructuredBuffer<int2> outputArray;
-StructuredBuffer<float> objectDepths;
 
 // Dimensions
 int width;
@@ -35,7 +34,7 @@ void CSMain (uint3 id : SV_DispatchThreadID)
     int2 c = outputArray[outputIndex];
     int objectId = c.x;
     int classIndex = c.y;
-    float depth = objectDepths[objectId];
+    float depth = ReadObjectDepth(objectId);
 
     // Calculate input coordinates (accounting for Y flip as in original shader)
     int2 inputCoord = int2(id.x, inputHeight - 1 - id.y);

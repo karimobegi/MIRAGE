@@ -112,6 +112,8 @@ public class PostProcessor : MonoBehaviour, IEffectHandler
     public void ExecuteShader() {
         if(ClassSettings.Length == 0 || !IsRunning) return;
         if(depthEstimationRunner.ObjectDepthBuffer == null) return;
+        Shader.SetInt("_UseDepthFilter", depthEstimationRunner.IsEnabled && depthEstimationRunner.IsPrepared ? 1 : 0);
+        Shader.SetInt("_DepthObjectCapacity", depthEstimationRunner.MaxObjects);
         Shader.SetBuffer(kernelHandle, "outputArray", segmentationRunner.OutputBuffer);
         Shader.SetBuffer(kernelHandle, "objectDepths", depthEstimationRunner.ObjectDepthBuffer);   
         Shader.Dispatch(kernelHandle, Mathf.CeilToInt(segmentationRunner.OutputWidth / 8f), Mathf.CeilToInt(segmentationRunner.OutputHeight / 8f), 1);

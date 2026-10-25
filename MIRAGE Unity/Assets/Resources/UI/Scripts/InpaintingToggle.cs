@@ -8,11 +8,13 @@ public class InpaintingToggle : MonoBehaviour
 
     void Start()
     {
-        inpaintingRunner = FindObjectOfType<InpaintingRunner>();
+        var pipeline = FindAnyObjectByType<Pipeline>();
+        inpaintingRunner = pipeline != null ? pipeline.ActiveInpaintingModel : FindAnyObjectByType<InpaintingRunner>();
     }
     
     public void OnToggle(bool value)
     {
+        if (inpaintingRunner == null) return;
         if (value)
         {
             inpaintingRunner.IsEnabled = true;

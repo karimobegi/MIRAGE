@@ -5,7 +5,6 @@
 RWTexture2D<float4> Result;
 Texture2D<float4> InputTexture;
 StructuredBuffer<int2> outputArray;
-StructuredBuffer<float> objectDepths;  // Add depth buffer
 int width;  // output width
 int height; // output height
 uint inputWidth;  // Add input texture width
@@ -46,7 +45,7 @@ void CSMain (uint3 id : SV_DispatchThreadID)
         return; // Skip if pixel is already processed
     }
 
-    float depth = objectDepths[objectId];
+    float depth = ReadObjectDepth(objectId);
     float4 effectColor = GetColorForClassAndDepth(classIndex, depth);        
     if (effectColor.a > 0)
     {
@@ -58,4 +57,4 @@ void CSMain (uint3 id : SV_DispatchThreadID)
         
     }
 
-} 
+}

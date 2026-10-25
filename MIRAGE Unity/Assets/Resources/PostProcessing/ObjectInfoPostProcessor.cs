@@ -58,8 +58,13 @@ public class ObjectInfoPostProcessor : CPUPostProcessor {
     /// <returns></returns>
     private string GetLabelText(LabelledSTrack track) {
         int labelId = track.Label;
-        string className = labelId < classNames.Length ? classNames[labelId] : labelId.ToString();
-        return $"{className}\n{depthEstimationRunner.DepthData[track.Detection]:0.00}m";
+        string className = labelId >= 0 && labelId < classNames.Length ? classNames[labelId] : labelId.ToString();
+        if (!depthEstimationRunner.TryGetDepth(track.Detection, out float depth))
+            return $"{className}\nDepth unavailable";
+        string value = depthEstimationRunner.UsesMetricDepth
+            ? $"{depth:0.00} m"
+            : $"{depth:0.00} (relative)";
+        return $"{className}\n{value}";
     }
 
     protected override void OnClassesUpdated()
