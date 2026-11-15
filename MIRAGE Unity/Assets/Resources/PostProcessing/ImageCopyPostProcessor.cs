@@ -16,19 +16,24 @@ public class ImageCopyPostProcessor : ImagePostProcessor, IEffectHandler
 
     public RenderTexture OutputTexture;   
     public override void Initialize(SegmentationRunner r, DepthEstimationRunner d, RenderTexture Output) {
-        Shader = Resources.Load<ComputeShader>("PostProcessing/Shaders/CopySegmentationShader");
+        if (Shader == null)
+            Shader = Resources.Load<ComputeShader>("PostProcessing/Shaders/CopySegmentationShader");
         
         base.Initialize(r, d, Output);
+        var activeShader = ActiveShader;
+        if (activeShader == null) return;
         
-        Shader.SetInt("inputWidth", segmentationRunner.ImageWidth);
-        Shader.SetInt("inputHeight", segmentationRunner.ImageHeight);
+        activeShader.SetInt("inputWidth", segmentationRunner.ImageWidth);
+        activeShader.SetInt("inputHeight", segmentationRunner.ImageHeight);
 
-
-
+        if (OutputTexture != null) {
+            OutputTexture.Release();
+            Destroy(OutputTexture);
+        }
         OutputTexture = new RenderTexture(segmentationRunner.ImageWidth, segmentationRunner.ImageHeight, 0, UnityEngine.Experimental.Rendering.GraphicsFormat.R8G8B8A8_UNorm);
         OutputTexture.enableRandomWrite = true;
         OutputTexture.Create();
-        Shader.SetTexture(kernelHandle, "OutputTexture", OutputTexture);
+        activeShader.SetTexture(kernelHandle, "OutputTexture", OutputTexture);
     }
 
     /// <summary>
@@ -36,23 +41,21 @@ public class ImageCopyPostProcessor : ImagePostProcessor, IEffectHandler
     /// </summary>
     /// <param name="Input">The current input frame</param>
     public override void ExecuteShader(RenderTexture Input) {
-        
-        if(!IsRunning) return;
+       if(!IsRunning) return;
        if (depthEstimationRunner.ObjectDepthBuffer == null) return;
-       Shader.SetInt("_UseDepthFilter", depthEstimationRunner.IsEnabled && depthEstimationRunner.IsPrepared ? 1 : 0);
-       Shader.SetInt("_DepthObjectCapacity", depthEstimationRunner.MaxObjects);
-       Shader.SetBuffer(kernelHandle, "outputArray", segmentationRunner.OutputBuffer);
-       Shader.SetTexture(kernelHandle, "InputTexture", Input);
-       Shader.SetBuffer(kernelHandle, "objectDepths", depthEstimationRunner.ObjectDepthBuffer);   
-       Shader.Dispatch(kernelHandle, Mathf.CeilToInt(segmentationRunner.ImageWidth / 8f), Mathf.CeilToInt(segmentationRunner.ImageHeight / 8f), 1);
+       var activeShader = ActiveShader;
+       if (activeShader == null) return;
+       activeShader.SetInt("_UseDepthFilter", depthEstimationRunner.IsEnabled && depthEstimationRunner.IsPrepared ? 1 : 0);
+       activeShader.SetInt("_DepthObjectCapacity", depthEstimationRunner.MaxObjects);
+       activeShader.SetBuffer(kernelHandle, "outputArray", segmentationRunner.OutputBuffer);
+       activeShader.SetTexture(kernelHandle, "InputTexture", Input);
+       activeShader.SetBuffer(kernelHandle, "objectDepths", depthEstimationRunner.ObjectDepthBuffer);   
+       activeShader.Dispatch(kernelHandle, Mathf.CeilToInt(segmentationRunner.ImageWidth / 8f), Mathf.CeilToInt(segmentationRunner.ImageHeight / 8f), 1);
     }
 
-    private void OnDestroy() {
-        if (OutputTexture != null) { OutputTexture.Release(); Destroy(OutputTexture); }
-        if (classSettingsBuffer != null) {
-            classSettingsBuffer.Release();
-            classSettingsBuffer = null;
-        }
+    protected override void OnDestroy() {
+        if (OutputTexture != null) { OutputTexture.Release(); Destroy(OutputTexture); OutputTexture = null; }
+        base.OnDestroy();
     }
 
 }

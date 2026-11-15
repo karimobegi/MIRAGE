@@ -13,6 +13,12 @@ namespace Mirage.Usability
     public sealed class MirageOperatorPanel : MonoBehaviour
     {
         public static bool IsVisible { get; private set; }
+
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        private static void ResetStaticState()
+        {
+            IsVisible = false;
+        }
         private const string SeenKey = "MIRAGE.OperatorHelp.Seen.v1";
         private bool visible;
         private int tab;
@@ -139,9 +145,12 @@ namespace Mirage.Usability
 
         private void DrawInput()
         {
-            var source = CameraInput.Instance;
+            var pipeline = FindAnyObjectByType<Pipeline>();
+            var source = pipeline != null && pipeline.ActiveSourceInput != null ? pipeline.ActiveSourceInput : CameraInput.Instance;
             if (source == null) { Label("This scene has no input component. Ask the maintainer to prepare Desktop UI."); return; }
-            Label(source.UseDebugVideoInput ? "Current input: recording" : "Current input: camera", true);
+            string modeLabel = source.UseExternalTextureInput ? "Current input: external texture / CAVE camera"
+                : source.UseDebugVideoInput ? "Current input: recording" : "Current input: camera";
+            Label(modeLabel, true);
             if (!string.IsNullOrEmpty(source.LastInputError)) Label(source.LastInputError);
             if (GUILayout.Button("Choose video...", GUILayout.Height(32)))
             {

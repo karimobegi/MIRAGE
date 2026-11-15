@@ -59,18 +59,21 @@ namespace Mirage.Usability
                 Add(issues, "RELATIVE_DEPTH", "Depth values are relative; they are not distances in metres.",
                     "Use the full range while learning the effects. Metric ranges require a separately validated metric setup.", false);
 
-            var input = CameraInput.Instance != null ? CameraInput.Instance : Object.FindAnyObjectByType<CameraInput>();
+            var input = pipeline.ActiveSourceInput != null ? pipeline.ActiveSourceInput : Object.FindAnyObjectByType<CameraInput>();
             if (input == null)
                 Add(issues, "INPUT_COMPONENT_MISSING", "No video or camera input is configured.",
                     "The maintainer should add CameraInput to this scene.", true);
             else
             {
-                if (!string.IsNullOrEmpty(input.LastInputError))
+                if (input.UseExternalTextureInput && input.ExternalSourceTexture == null && input.ExternalSourceCamera == null)
+                    Add(issues, "EXTERNAL_SOURCE_MISSING", "External texture mode is enabled, but no external texture or camera is assigned.",
+                        "Assign ExternalSourceTexture or ExternalSourceCamera on CameraInput, or call SubmitExternalFrame from your CAVE/render script.", true);
+                else if (!string.IsNullOrEmpty(input.LastInputError))
                     Add(issues, "INPUT_FAILED", input.LastInputError, "Choose another recording or refresh the camera list in Input.", true);
                 else if (requirePreparedModels && !input.HasFrame)
                     Add(issues, "INPUT_WAITING", "Waiting for the first video or camera frame.",
                         "Open Input and choose a recording or a connected camera. A recording can take a moment to open.", false);
-                if (input.VideoPlayer == null)
+                if (!input.UseExternalTextureInput && input.VideoPlayer == null)
                     Add(issues, "VIDEO_PLAYER_MISSING", "This scene has no video player.",
                         "Camera input can still work. Ask the maintainer to add a video player for recordings.", false);
                 if (!input.UseDebugVideoInput && input.HasFrame && input.CurrentFrame != null && segmentation != null &&

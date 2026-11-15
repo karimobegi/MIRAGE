@@ -32,21 +32,26 @@ Enrico Rukzio <sup>a</sup>
 ## Setup
 ### 1. Unity 
 1. Clone this repository
-2. Download and install [Unity](https://unity.com/download) version `6000.2.2f1`
-3. Open the `MIRAGE Unity` Project.
+2. Download and install [Unity](https://unity.com/download) `6000.2.2f1` or newer Unity 6 streams, including **Unity 6.6 (`6000.6.x`)** and **Unity 6.7 (`6000.7.x`)**
+3. Open the `MIRAGE Unity` Project (`com.unity.ai.inference` is configured at `2.6.1` for Unity 6.2–6.7, Fast Enter Play Mode without Domain Reload, DXC HLSL 2021 compute shaders, and managed CoreCLR compatibility).
+4. Optional upgrade preflight: run **MIRAGE > Prepare desktop > 4. Check Unity 6.6 and 6.7 readiness** in the Unity Editor. If upgrading third-party OpenUPM UI packages in place on Unity 6.5+, update `com.unity.uiextensions` (`3.0.0+`) or replace any remaining third-party `Object.GetInstanceID()` calls with `GetEntityId()`.
 
 ### 2. Preparing Computational Models
 `MIRAGE` utilizes multiple computational models that need to be converted to the `ONNX` format.
 After acquiring an ONNX model, add it to the Unity project.
 #### Object Detection & Segmentation
-We use [YOLO26-seg](https://github.com/ultralytics/ultralytics) for Object Detection and Segmentation. It can be converted to `ONNX` with this Python code:
+`YOLOSegmentationRunner` (`OutputFormat = Auto`) supports both **Ultralytics YOLO27** and **YOLO26** segmentation ONNX exports — including **NMS-free end-to-end (`end2end=True`)** outputs (`(1, 300, 38)`, used natively by **YOLO27m-seg / YOLO27l-seg** query-based Transformers and default `YOLO26/27` exports) as well as **dense anchor (`end2end=False`)** outputs (`(1, 116, 8400)`):
 
 ```python
 from ultralytics import YOLO
 
+# Production default today (YOLO26s-seg; swap to "yolo27s-seg.pt" / "yolo27m-seg.pt" once YOLO27 weights are installed):
 model = YOLO("yolo26s-seg.pt")
-model.export(format="onnx", end2end = False)
+
+# Both default NMS-free end2end=True (1x300x38) and dense end2end=False (1x116x8400) are auto-detected:
+model.export(format="onnx")  # or model.export(format="onnx", end2end=False)
 ```
+*(Note: Ultralytics unveiled **YOLO27** at YOLO Vision 2026 with CNN `n/s` and NMS-free query-Transformer / UltraViT `m/l` segmentation heads up to `imgsz=800`. When exporting an `800×800` model such as `yolo27l-seg`, set `Input Width` and `Input Height` on the `YOLO` GameObject to `800`.)*
 For more detailed instructions, please refer to the [Official Documentation](https://docs.ultralytics.com/tasks/segment/)
 
 #### Multi-Object Tracking
@@ -79,7 +84,7 @@ We use the [MI-GAN](https://github.com/Picsart-AI-Research/MI-GAN) Inpainting Mo
 
 The MI-GAN runner now processes contextual crops around selected objects, preserves the model's input aspect ratio, and composites a full-frame RGBA overlay. Overlapping crops are merged, and `Maximum Crops Per Frame` clusters targets rather than dropping them. `Dilation Pixels` and `Feather Pixels` control mask edges in segmentation-output pixels. Model RGB is converted to/from sRGB in Linear Unity projects.
 
-`Enable Temporal Reuse` enables experimental backward block matching on visible background. A cached fill is reused only when photometric confidence and complete warped-mask coverage pass; otherwise the model runs again. Reuse is bounded by frame count and elapsed time, and history is invalidated on settings changes, source switches, seeks, and input-size changes. It is disabled by default pending validation with your camera and GPU.
+`EnableTemporalStabilization` (enabled by default, zero CPU readback stall) applies a motion-compensated bilateral temporal filter (`TemporalBlendWeight`, `TemporalColorClamp`) across fresh MI-GAN frames to suppress frame-to-frame GAN texture shimmer inside moving masks while keeping newly uncovered disocclusion edges crisp; coherent boundary background motion is propagated into interior mask cells (`PropagateMotion`) so large vehicles and pedestrians do not leave interior motion dead-zones. `EnableTemporalReuse` enables experimental full-frame skipping via backward block matching on visible background, reusing a cached fill only when photometric confidence and complete warped-mask coverage pass. History is invalidated on settings changes, source switches, seeks, and input-size changes.
 
 #### Moebius quality mode
 
@@ -87,8 +92,11 @@ An alternative `MoebiusRunner` uses the official Moebius model through a local P
 
 Moebius is a quality comparison mode. Its native diffusion sampler runs outside Unity and requires CUDA PyTorch. It has not been converted to ONNX or claimed to meet the live MI-GAN frame budget. The bridge accepts only a loopback HTTP server and validates the returned frame ID before displaying a result.
 
-### 3. Setting up Input
-1. Either use a `video` or `Webcam`for input.
+### 3. Setting up Input (Camera, Recording, or External CAVE / RenderTexture)
+1. Use a connected `Webcam`, a local `video` recording, or an **External Texture / Unity Camera** (`UseExternalTextureInput` on `CameraInput`, accepting `ExternalSourceTexture`, `ExternalSourceCamera`, or `SubmitExternalFrame(...)` for CAVE 3D virtual cameras, stereo rigs, and Spout/NDI cluster feeds).
+2. For **Dual-Viewpoint / Multi-Occupant CAVE** setups:
+   - **Shared perception, asymmetric mediation (`1x CV -> Nx viewpoints`)**: configure `SecondaryViewpoints` on `Pipeline` (each with its own `PostProcessorsRoot`, UI overlays, and optional `InpaintingModel`) so a single YOLO27/YOLO26 + ByteTrack + DA3 pass drives divergent occupant views (e.g., Driver AR hazard cues vs. Passenger DR clutter reduction) without cross-viewpoint compute-shader collisions.
+   - **Independent stereo / multi-camera feeds**: bind explicit `sourceInput` and `postProcessorsRoot` on each `Pipeline` instance (`RegisterAsGlobalInstance = false` on secondary `CameraInput` components).
 
 ## Preparing a Scene
 1. Open a `Pipeline` scene 
@@ -210,7 +218,7 @@ We provide `SegmentationCommon.hlsl`, a shader file that manages the Class Setti
 
 
 ## Adding new models
-We use Unity Inference Engine (formerly Unity Sentis) to execute `ONNX` models in Unity. While we provide abstract `runner` classes to simplify adding new models, we recommend reviewing the [documentation first](https://docs.unity3d.com/Packages/com.unity.ai.inference@2.2/manual/index.html).
+We use Unity Inference Engine (formerly Unity Sentis, configured at `2.6.1`) to execute `ONNX` models in Unity. While we provide abstract `runner` classes to simplify adding new models, we recommend reviewing the [documentation first](https://docs.unity3d.com/Packages/com.unity.ai.inference@2.6/manual/index.html).
 
 Refer to the `ModelRunner.cs` script to get a basic understanding of how our pipeline executes models.
 

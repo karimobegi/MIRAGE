@@ -6,6 +6,12 @@ using System.Linq;
 
 namespace UnityEngine
 {
+    public enum RuntimeInitializeLoadType { SubsystemRegistration, BeforeSceneLoad, AfterSceneLoad }
+    public sealed class RuntimeInitializeOnLoadMethodAttribute : Attribute
+    {
+        public RuntimeInitializeLoadType loadType;
+        public RuntimeInitializeOnLoadMethodAttribute(RuntimeInitializeLoadType phase = RuntimeInitializeLoadType.AfterSceneLoad) { loadType = phase; }
+    }
     public sealed class SerializeField : Attribute { }
     public sealed class HideInInspector : Attribute { }
     public sealed class TooltipAttribute : Attribute { public TooltipAttribute(string text) { } }
@@ -22,16 +28,24 @@ namespace UnityEngine
         public static T FindAnyObjectByType<T>() where T : Object => Objects.OfType<T>().FirstOrDefault();
         public static T[] FindObjectsByType<T>(FindObjectsSortMode mode) where T : Object => Objects.OfType<T>().ToArray();
         public static T[] FindObjectsByType<T>(FindObjectsInactive inactive,FindObjectsSortMode mode) where T : Object => Objects.OfType<T>().ToArray();
-        public static T Instantiate<T>(T value) where T : Object => value;
+        public static T Instantiate<T>(T value) where T : Object
+        {
+            if (value is ComputeShader shader) return (T)(Object)new ComputeShader { name = shader.name };
+            return value;
+        }
         public static GameObject Instantiate(GameObject value, Transform parent) => new GameObject();
         public static void Destroy(Object value) { Objects.Remove(value); }
         public static void DestroyImmediate(Object value) { Destroy(value); }
         public static void DontDestroyOnLoad(Object value) { }
+        public int GetInstanceID() => GetHashCode();
+        public int GetEntityId() => GetHashCode();
     }
     public class MonoBehaviour : Object
     {
         public bool enabled = true;
-        public GameObject gameObject=new GameObject();
+        public GameObject gameObject = new GameObject();
+        public Transform transform => gameObject.transform;
+        public MonoBehaviour() { gameObject.Components.Add(this); }
         public Coroutine StartCoroutine(IEnumerator iterator) => TestScheduler.Start(iterator, this);
         public void StopAllCoroutines() => TestScheduler.Stop(this);
     }
@@ -186,18 +200,58 @@ namespace UnityEngine
     }
     public class ComputeShader : Object
     {
+        public readonly Dictionary<string, Texture> BoundTextures = new Dictionary<string, Texture>();
+        public readonly Dictionary<string, ComputeBuffer> BoundBuffers = new Dictionary<string, ComputeBuffer>();
+        public int Dispatches;
         public int FindKernel(string name) => 0;
         public void SetInt(string name,int value) { }
         public void SetFloat(string name,float value) { }
         public void SetBool(string name,bool value) { }
         public void SetVector(string name,Vector4 value) { }
-        public void SetBuffer(int kernel,string name,ComputeBuffer value) { }
-        public void SetTexture(int kernel,string name,Texture value) { }
-        public void Dispatch(int kernel,int x,int y,int z) { }
+        public void SetBuffer(int kernel,string name,ComputeBuffer value) { BoundBuffers[kernel + ":" + name] = value; }
+        public void SetTexture(int kernel,string name,Texture value) { BoundTextures[kernel + ":" + name] = value; }
+        public void Dispatch(int kernel,int x,int y,int z) { Dispatches++; }
     }
     public static class Resources { public static T Load<T>(string name) where T : Object,new() => new T(); }
     public class TextAsset : Object { public string text; }
-    public class Transform : Object { public Transform transform => this; }
+    public class Transform : Object
+    {
+        public GameObject gameObject;
+        public Transform parent;
+        public readonly List<Transform> Children = new List<Transform>();
+        public Transform transform => this;
+        public void SetParent(Transform newParent)
+        {
+            if (parent != null) parent.Children.Remove(this);
+            parent = newParent;
+            if (newParent != null && !newParent.Children.Contains(this)) newParent.Children.Add(this);
+        }
+        public bool IsChildOf(Transform candidate)
+        {
+            for (var current = this; current != null; current = current.parent)
+                if (ReferenceEquals(current, candidate)) return true;
+            return false;
+        }
+        public T[] GetComponentsInChildren<T>(bool includeInactive = false) where T : class
+        {
+            var results = new List<T>();
+            CollectComponents(this, includeInactive, results);
+            return results.ToArray();
+        }
+        private static void CollectComponents<T>(Transform node, bool includeInactive, List<T> results) where T : class
+        {
+            if (node == null) return;
+            if (node.gameObject != null && (includeInactive || node.gameObject.activeSelf))
+            {
+                foreach (var comp in node.gameObject.Components)
+                {
+                    if (comp is MonoBehaviour mb && !includeInactive && !mb.enabled) continue;
+                    if (comp is T typed) results.Add(typed);
+                }
+            }
+            foreach (var child in node.Children) CollectComponents(child, includeInactive, results);
+        }
+    }
     public struct Rect
     {
         public float x,y,width,height;
@@ -209,14 +263,22 @@ namespace UnityEngine
         public bool Overlaps(Rect other)=>xMin<other.xMax&&xMax>other.xMin&&yMin<other.yMax&&yMax>other.yMin;
     }
     public class RectTransform : Transform { public Rect rect=new Rect { size=new Vector2(640,360) }; public Vector2 pivot, anchoredPosition; }
+    public class Camera : MonoBehaviour { public RenderTexture targetTexture; }
     public partial class GameObject : Object
     {
-        public GameObject(string name = "test") { this.name = name; }
-        public Transform transform=new Transform();
+        public readonly List<Object> Components = new List<Object>();
+        public bool activeSelf = true;
+        public GameObject(string name = "test") { this.name = name; transform = new Transform { name = name, gameObject = this }; }
+        public Transform transform;
         public TestScene scene;
-        public T AddComponent<T>() where T:new() => new T();
-        public void SetActive(bool active) { }
-        public T GetComponent<T>() where T:new() => new T();
+        public T AddComponent<T>() where T:new()
+        {
+            var instance = new T();
+            if (instance is MonoBehaviour mb) { mb.gameObject = this; if (!Components.Contains(mb)) Components.Add(mb); }
+            return instance;
+        }
+        public void SetActive(bool active) { activeSelf = active; }
+        public T GetComponent<T>() where T:new() => Components.OfType<T>().FirstOrDefault() ?? new T();
         public T GetComponentInChildren<T>() where T:new() => new T();
         public T GetComponentInParent<T>() where T:new() => new T();
     }
@@ -281,11 +343,15 @@ namespace Unity.InferenceEngine
 {
     public class ModelAsset : UnityEngine.Object { }
     public enum BackendType { GPUCompute }
-    public enum DataType { Float }
+    public enum DataType { Float, Int }
     public enum TensorLayout { NCHW }
     public enum ChannelSwizzle { RGBA }
     public enum CoordOrigin { TopLeft }
-    public class Model { public List<int> layers=new List<int>(); }
+    public class Model
+    {
+        public List<int> layers=new List<int>();
+        public string[] TestOutputDescriptors;
+    }
     public class TensorShape { public int[] values; public TensorShape(params int[] values) { this.values=values; } public int this[int index] => values[index]; }
     public class DynamicTensorShape { public DynamicTensorShape(params int[] values) { } }
     public class Tensor<T> : IDisposable
@@ -316,9 +382,11 @@ namespace Unity.InferenceEngine
         public static void RenderToTexture(Tensor<float> tensor,UnityEngine.RenderTexture texture,TextureTransform transform=default) { }
     }
     public class ComputeTensorData { public UnityEngine.ComputeBuffer buffer=new UnityEngine.ComputeBuffer(1,4); public static ComputeTensorData Pin<T>(Tensor<T> tensor) => new ComputeTensorData(); }
-    public static class ModelLoader { public static Model Load(ModelAsset asset) => new Model(); }
+    public static class ModelLoader { public static Func<ModelAsset, Model> OverrideLoader; public static Model Load(ModelAsset asset) => OverrideLoader != null ? OverrideLoader(asset) : new Model(); }
     public class FunctionalTensor
     {
+        public string Descriptor;
+        public override string ToString() => Descriptor ?? base.ToString();
         public FunctionalTensor this[params object[] index] => new FunctionalTensor();
         public static FunctionalTensor operator +(FunctionalTensor a,FunctionalTensor b) => a;
         public static FunctionalTensor operator -(FunctionalTensor a,FunctionalTensor b) => a;
@@ -337,8 +405,16 @@ namespace Unity.InferenceEngine
         public static FunctionalTensor Constant(float value) => new FunctionalTensor();
         public static FunctionalTensor Constant(TensorShape s,float[] values) => new FunctionalTensor();
         public static FunctionalTensor Pad(FunctionalTensor a,int[] b,float c) => a;
-        public static FunctionalTensor[] Forward(Model m,params FunctionalTensor[] input) => new [] { new FunctionalTensor(),new FunctionalTensor() };
+        public static FunctionalTensor[] Forward(Model m,params FunctionalTensor[] input)
+        {
+            if (m != null && m.TestOutputDescriptors != null && m.TestOutputDescriptors.Length >= 2)
+                return new[] { new FunctionalTensor { Descriptor = m.TestOutputDescriptors[0] }, new FunctionalTensor { Descriptor = m.TestOutputDescriptors[1] } };
+            return new [] { new FunctionalTensor(),new FunctionalTensor() };
+        }
         public static FunctionalTensor Ceil(FunctionalTensor a)=>a;
+        public static FunctionalTensor Int(this FunctionalTensor a)=>a;
+        public static FunctionalTensor Float(this FunctionalTensor a)=>a;
+        public static FunctionalTensor Type(this FunctionalTensor a,DataType t)=>a;
         public static FunctionalTensor Interpolate(FunctionalTensor a,int[] dims,string mode) => a;
         public static FunctionalTensor Transpose(FunctionalTensor a,int b,int c) => a;
         public static FunctionalTensor ReduceMax(FunctionalTensor a,int b) => a;

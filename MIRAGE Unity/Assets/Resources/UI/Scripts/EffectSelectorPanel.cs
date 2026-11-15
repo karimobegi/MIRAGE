@@ -8,6 +8,12 @@ public class EffectSelectorPanel : MonoBehaviour
 {
     public static EffectSelectorPanel Instance;
 
+    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+    private static void ResetStaticState()
+    {
+        Instance = null;
+    }
+
     public GameObject EffectPanelPrefab;
     public GameObject InpaintingEffectPanelPrefab;
 
@@ -74,5 +80,10 @@ public class EffectSelectorPanel : MonoBehaviour
             effectPanel.effectType = button.effectType;
             activeClassPanel.AddEffectPanel(effectPanel);
         });
+    }
+
+    private void OnDestroy()
+    {
+        if (Instance == this) Instance = null;
     }
 }

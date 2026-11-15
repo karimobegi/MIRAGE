@@ -1,6 +1,8 @@
 [CmdletBinding()]
-param([string]$RepositoryRoot = (Split-Path -Parent $PSScriptRoot))
+param([string]$RepositoryRoot = '')
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'Invoke-RoslynCheck.ps1')
+$RepositoryRoot = Resolve-MirageRepositoryRoot $RepositoryRoot $PSScriptRoot
 $taskRuntime = Join-Path $RepositoryRoot 'MIRAGE Unity/Assets/Resources'
 $taskSources = @(
     (Join-Path $PSScriptRoot 'RuntimeStubs.cs'),
@@ -20,10 +22,6 @@ foreach ($taskSource in @(
     'Scripts/StudyManager.cs',
     'Editor/MirageDesktopPreparation.cs'
 )) { $taskSources += Join-Path $taskRuntime $taskSource }
-$taskReferences = @(Get-ChildItem -LiteralPath (Join-Path $PSHOME 'ref') -Filter '*.dll' | ForEach-Object { $_.FullName })
-$taskReferences += [Newtonsoft.Json.Linq.JObject].Assembly.Location
-Add-Type -Path $taskSources -ReferencedAssemblies ($taskReferences | Select-Object -Unique) -IgnoreWarnings -CompilerOptions '/define:UNITY_EDITOR,UNITY_EDITOR_WIN,MIRAGE_DIAGNOSTICS_REAL','/nowarn:1701'
-[MirageRuntimeChecks]::Run()
 $taskOutput = Join-Path $PSScriptRoot ('.cache/usability-' + [guid]::NewGuid().ToString('N'))
-[MirageUsabilityChecks]::Run($taskOutput)
+Invoke-MirageRoslynHarness -SourceFiles $taskSources -EntryExpression '[MirageRuntimeChecks]::Run() + [System.Environment]::NewLine + [MirageUsabilityChecks]::Run($args[0])' -EntryArguments @($taskOutput) -CompilerOptions @('/define:UNITY_EDITOR,UNITY_EDITOR_WIN,MIRAGE_DIAGNOSTICS_REAL','/nowarn:1701') -IncludeNewtonsoftJson
 Write-Output 'LIMIT: actual C# and filesystem code are exercised with explicit Unity seams. Native Unity GUI, file-dialog interaction, device events, rendering, and player builds remain unverified.'

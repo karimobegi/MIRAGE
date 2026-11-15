@@ -8,6 +8,11 @@ using UnityEngine.UI;
 
 namespace UnityEngine
 {
+    public enum RuntimeInitializeLoadType { SubsystemRegistration, BeforeSceneLoad, AfterSceneLoad }
+    public sealed class RuntimeInitializeOnLoadMethodAttribute : Attribute
+    {
+        public RuntimeInitializeOnLoadMethodAttribute(RuntimeInitializeLoadType phase = RuntimeInitializeLoadType.AfterSceneLoad) { }
+    }
     public class SerializeField : Attribute { }
     public enum FindObjectsInactive { Include, Exclude }
     public enum FindObjectsSortMode { None }

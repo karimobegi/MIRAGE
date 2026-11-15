@@ -25,6 +25,8 @@ public class PostProcessor : MonoBehaviour, IEffectHandler
     /// The post-processing shader
     /// </summary>
     public ComputeShader Shader;
+    protected ComputeShader runtimeShader;
+    protected ComputeShader ActiveShader => runtimeShader != null ? runtimeShader : Shader;
 
     /// <summary>
     /// The settings for the post-processing effect.
@@ -61,6 +63,16 @@ public class PostProcessor : MonoBehaviour, IEffectHandler
 
 #endregion
 #region Effect Initialization
+    protected void EnsureRuntimeShader() {
+        if (runtimeShader != null) {
+            Destroy(runtimeShader);
+            runtimeShader = null;
+        }
+        if (Shader != null) {
+            runtimeShader = Instantiate(Shader);
+        }
+    }
+
     public virtual void Initialize(SegmentationRunner s, DepthEstimationRunner d, RenderTexture Output) {
         segmentationRunner = s;
         depthEstimationRunner = d;
@@ -68,13 +80,16 @@ public class PostProcessor : MonoBehaviour, IEffectHandler
         int outputWidth = segmentationRunner.OutputWidth;
         int outputHeight = segmentationRunner.OutputHeight;
 
-       // Set up the computer shader, all these variables sty the same
-        kernelHandle = Shader.FindKernel("CSMain");
-        Shader.SetTexture(kernelHandle, "Result", Output);
-        Shader.SetInt("width", outputWidth);
-        Shader.SetInt("height", outputHeight);
+        EnsureRuntimeShader();
+        var activeShader = ActiveShader;
+        if (activeShader == null) return;
 
-       // Shader.SetBuffer(kernelHandle, "selectedClasses", selectedClassesBuffer);
+        // Set up the compute shader on an isolated runtime instance so multiple viewpoints do not collide
+        kernelHandle = activeShader.FindKernel("CSMain");
+        activeShader.SetTexture(kernelHandle, "Result", Output);
+        activeShader.SetInt("width", outputWidth);
+        activeShader.SetInt("height", outputHeight);
+
         UpdateClasses();
     }
     public virtual void UpdateClasses() {
@@ -94,9 +109,12 @@ public class PostProcessor : MonoBehaviour, IEffectHandler
         int stride = sizeof(int) + 2 * sizeof(float) + 4 * sizeof(float);
         classSettingsBuffer = new ComputeBuffer(classSettingsStructs.Length, stride);
         classSettingsBuffer.SetData(classSettingsStructs);
-                
-        Shader.SetInt("selectedClassesCount", classSettingsStructs.Length);
-        Shader.SetBuffer(kernelHandle, "selectedClasses", classSettingsBuffer);
+
+        var activeShader = ActiveShader;
+        if (activeShader != null) {
+            activeShader.SetInt("selectedClassesCount", classSettingsStructs.Length);
+            activeShader.SetBuffer(kernelHandle, "selectedClasses", classSettingsBuffer);
+        }
     }
 
     public void UpdateClasses(List<EffectSetting> classes)
@@ -112,18 +130,24 @@ public class PostProcessor : MonoBehaviour, IEffectHandler
     public void ExecuteShader() {
         if(ClassSettings.Length == 0 || !IsRunning) return;
         if(depthEstimationRunner.ObjectDepthBuffer == null) return;
-        Shader.SetInt("_UseDepthFilter", depthEstimationRunner.IsEnabled && depthEstimationRunner.IsPrepared ? 1 : 0);
-        Shader.SetInt("_DepthObjectCapacity", depthEstimationRunner.MaxObjects);
-        Shader.SetBuffer(kernelHandle, "outputArray", segmentationRunner.OutputBuffer);
-        Shader.SetBuffer(kernelHandle, "objectDepths", depthEstimationRunner.ObjectDepthBuffer);   
-        Shader.Dispatch(kernelHandle, Mathf.CeilToInt(segmentationRunner.OutputWidth / 8f), Mathf.CeilToInt(segmentationRunner.OutputHeight / 8f), 1);
+        var activeShader = ActiveShader;
+        if(activeShader == null) return;
+        activeShader.SetInt("_UseDepthFilter", depthEstimationRunner.IsEnabled && depthEstimationRunner.IsPrepared ? 1 : 0);
+        activeShader.SetInt("_DepthObjectCapacity", depthEstimationRunner.MaxObjects);
+        activeShader.SetBuffer(kernelHandle, "outputArray", segmentationRunner.OutputBuffer);
+        activeShader.SetBuffer(kernelHandle, "objectDepths", depthEstimationRunner.ObjectDepthBuffer);   
+        activeShader.Dispatch(kernelHandle, Mathf.CeilToInt(segmentationRunner.OutputWidth / 8f), Mathf.CeilToInt(segmentationRunner.OutputHeight / 8f), 1);
     }
 
 #endregion
-    private void OnDestroy() {
+    protected virtual void OnDestroy() {
         if (classSettingsBuffer != null) {
             classSettingsBuffer.Release();
             classSettingsBuffer = null;
+        }
+        if (runtimeShader != null) {
+            Destroy(runtimeShader);
+            runtimeShader = null;
         }
     }
 

@@ -39,6 +39,21 @@ public class BenchmarkAutomation : MonoBehaviour
     
     // Singleton instance to prevent duplicates
     private static BenchmarkAutomation _instance;
+
+    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+    private static void ResetStaticState()
+    {
+        _instance = null;
+    }
+
+    private static string FormatObjectId(UnityEngine.Object target)
+    {
+#if UNITY_6000_4_OR_NEWER
+        return target.GetEntityId().ToString();
+#else
+        return target.GetInstanceID().ToString();
+#endif
+    }
     
     /// <summary>
     /// Public access to the singleton instance
@@ -260,7 +275,7 @@ public class BenchmarkAutomation : MonoBehaviour
             benchmarkManager.SetAutoStartEnabled(false); // Disable auto-start since we control it
             benchmarkManager.SetCSVExportEnabled(false); // Disable automatic export - we'll handle it manually with custom names
             
-            Debug.Log($"Fresh BenchmarkManager found and configured: {benchmarkManager.GetInstanceID()}");
+            Debug.Log($"Fresh BenchmarkManager found and configured: {FormatObjectId(benchmarkManager)}");
         }
         else
         {
@@ -274,7 +289,7 @@ public class BenchmarkAutomation : MonoBehaviour
         
         if (videoPlayer != null)
         {
-            Debug.Log($"Fresh VideoPlayer found: {videoPlayer.GetInstanceID()}");
+            Debug.Log($"Fresh VideoPlayer found: {FormatObjectId(videoPlayer)}");
         }
         else
         {
@@ -570,5 +585,6 @@ public class BenchmarkAutomation : MonoBehaviour
     void OnDestroy()
     {
         StopAutomation();
+        if (_instance == this) _instance = null;
     }
 }

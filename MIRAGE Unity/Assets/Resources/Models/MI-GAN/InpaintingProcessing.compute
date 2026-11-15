@@ -5,8 +5,10 @@
 #pragma kernel PrepareCrop
 #pragma kernel CompositeCrop
 #pragma kernel EstimateMotion
+#pragma kernel PropagateMotion
 #pragma kernel ResetReuseStats
 #pragma kernel WarpHistory
+#pragma kernel TemporalStabilize
 
 Texture2D<float> MaskSource;
 Texture2D<float> OriginalMask;
@@ -121,6 +123,7 @@ void CompositeCrop(uint3 id : SV_DispatchThreadID)
 Texture2D<float4> PreviousFrame;
 Texture2D<float4> PreviousOverlay;
 Texture2D<float> PreviousMask;
+Texture2D<float4> RawFlow;
 RWTexture2D<float4> FlowResult;
 Texture2D<float4> Flow;
 RWTexture2D<float4> WarpedOverlay;
@@ -132,6 +135,8 @@ int FlowHeight;
 int SearchRadius;
 float MaxPhotometricError;
 float MinMotionUniqueness;
+float TemporalBlendWeight;
+float TemporalColorClamp;
 
 float4 SampleHistory(float2 uv)
 {
@@ -206,6 +211,59 @@ void EstimateMotion(uint3 id : SV_DispatchThreadID)
     FlowResult[id.xy] = float4(float2(bestOffset) * stepUV, bestError, valid ? 1 : 0);
 }
 
+// Propagates coherent surrounding background motion into interior mask cells
+// (>40 px diameter at 720p) where all local block-matching samples are occluded.
+[numthreads(8,8,1)]
+void PropagateMotion(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= (uint)FlowWidth || id.y >= (uint)FlowHeight) return;
+    float4 current = RawFlow.Load(int3(id.xy, 0));
+    if (current.w > 0.5)
+    {
+        FlowResult[id.xy] = current;
+        return;
+    }
+
+    float2 sumFlow = float2(0.0, 0.0);
+    float sumError = 0.0;
+    float weightSum = 0.0;
+    float2 minFlow = float2(1000.0, 1000.0);
+    float2 maxFlow = float2(-1000.0, -1000.0);
+    int validNeighbors = 0;
+
+    for (int dy = -12; dy <= 12; dy++)
+    {
+        int ny = int(id.y) + dy;
+        if (ny < 0 || ny >= FlowHeight) continue;
+        for (int dx = -12; dx <= 12; dx++)
+        {
+            if (dx == 0 && dy == 0) continue;
+            int nx = int(id.x) + dx;
+            if (nx < 0 || nx >= FlowWidth) continue;
+            float4 neighbor = RawFlow.Load(int3(nx, ny, 0));
+            if (neighbor.w < 0.5) continue;
+
+            float distSq = float(dx * dx + dy * dy);
+            float w = 1.0 / max(distSq, 1.0);
+            sumFlow += neighbor.xy * w;
+            sumError += neighbor.z * w;
+            weightSum += w;
+            minFlow = min(minFlow, neighbor.xy);
+            maxFlow = max(maxFlow, neighbor.xy);
+            validNeighbors++;
+        }
+    }
+
+    float2 stepUV = 1.0 / max(float2(MotionWidth, MotionHeight), float2(1.0, 1.0));
+    float2 span = maxFlow - minFlow;
+    bool coherent = validNeighbors >= 4 && weightSum > 0.0 &&
+                    span.x <= 2.5 * stepUV.x && span.y <= 2.5 * stepUV.y;
+    if (coherent)
+        FlowResult[id.xy] = float4(sumFlow / weightSum, sumError / weightSum, 1.0);
+    else
+        FlowResult[id.xy] = float4(0.0, 0.0, 1000.0, 0.0);
+}
+
 [numthreads(1,1,1)]
 void ResetReuseStats(uint3 id : SV_DispatchThreadID)
 {
@@ -234,4 +292,30 @@ void WarpHistory(uint3 id : SV_DispatchThreadID)
         return;
     }
     WarpedOverlay[id.xy] = float4(previous.rgb, alpha);
+}
+
+// Motion-compensated bilateral temporal filter for fresh single-image GAN fills.
+// Suppresses frame-to-frame texture shimmer inside moving masks while keeping
+// newly uncovered edges and structural background changes 100% fresh.
+[numthreads(8,8,1)]
+void TemporalStabilize(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= (uint)Width || id.y >= (uint)Height) return;
+    float4 current = Overlay[id.xy];
+    if (current.a <= 0.0001) return;
+
+    float2 uv = (float2(id.xy) + 0.5) / float2(Width, Height);
+    float4 motion = Flow.SampleLevel(sampler_linear_clamp, uv, 0);
+    if (motion.w < 0.75) return;
+
+    float2 previousUV = uv + motion.xy;
+    if (any(previousUV <= 0.0) || any(previousUV >= 1.0)) return;
+
+    float4 previous = SampleHistory(previousUV);
+    if (previous.a <= 0.0001 || previous.a + 0.02 < current.a) return;
+
+    float colorDiff = dot(abs(current.rgb - previous.rgb), float3(0.333333, 0.333333, 0.333333));
+    float consistency = saturate(1.0 - colorDiff / max(TemporalColorClamp, 0.001));
+    float blend = saturate(TemporalBlendWeight) * consistency;
+    Overlay[id.xy] = float4(lerp(current.rgb, previous.rgb, blend), current.a);
 }

@@ -1,6 +1,8 @@
 [CmdletBinding()]
-param([string]$RepositoryRoot = (Split-Path -Parent $PSScriptRoot))
+param([string]$RepositoryRoot = '')
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'Invoke-RoslynCheck.ps1')
+$RepositoryRoot = Resolve-MirageRepositoryRoot $RepositoryRoot $PSScriptRoot
 $taskResources = Join-Path $RepositoryRoot 'MIRAGE Unity/Assets/Resources'
 $taskSources = @(
     (Join-Path $PSScriptRoot 'PresetUiStubs.cs'),
@@ -16,8 +18,5 @@ $taskSources = @(
     (Join-Path $taskResources 'UI/Scripts/KuwaharaSlider.cs'),
     (Join-Path $PSScriptRoot 'PresetUiChecks.cs')
 )
-$taskJsonAssembly = [Newtonsoft.Json.JsonConvert].Assembly.Location
-$taskFrameworkReferences = Get-ChildItem -LiteralPath (Join-Path $PSHOME 'ref') -Filter '*.dll' | ForEach-Object FullName
-Add-Type -Path $taskSources -ReferencedAssemblies @($taskFrameworkReferences + $taskJsonAssembly) -CompilerOptions '/nowarn:1701'
-[PresetUiChecks]::Run()
+Invoke-MirageRoslynHarness -SourceFiles $taskSources -EntryExpression '[PresetUiChecks]::Run()' -CompilerOptions @('/nowarn:1701') -IncludeNewtonsoftJson
 Write-Output 'LIMIT: production preset/UI code is exercised against managed Unity seams. Native prefab layout, UI events and rendering still require Unity Play-mode validation.'

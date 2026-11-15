@@ -10,6 +10,12 @@ public class DebugVideoPlayerInput : MonoBehaviour
 {
 
     public static DebugVideoPlayerInput Instance;
+
+    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+    private static void ResetStaticState()
+    {
+        Instance = null;
+    }
     public VideoPlayer videoPlayer;
     // Start is called before the first frame update
 
@@ -27,6 +33,11 @@ public class DebugVideoPlayerInput : MonoBehaviour
         videoPlayer.targetTexture = CurrentFrame;
         VideoPanel.texture = CurrentFrame;
         videoPlayer.Play();
+    }
+
+    private void OnDestroy()
+    {
+        if (Instance == this) Instance = null;
     }
 
 }

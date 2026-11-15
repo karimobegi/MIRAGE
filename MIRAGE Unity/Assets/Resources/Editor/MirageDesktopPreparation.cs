@@ -39,6 +39,7 @@ public static class MirageDesktopPreparation
         Configure(depth, 504, 504, 640, 360);
         Configure(migan, 512, 512, 1280, 720);
         yolo.ClipPadding = true;
+        yolo.OutputFormat = YoloOutputFormat.Auto;
         depth.NormalizeInput = true;
         depth.OutputUnits = DepthValueUnits.Relative;
         depth.DepthScale = 1;
@@ -71,7 +72,7 @@ public static class MirageDesktopPreparation
         }
         EditorUtility.SetDirty(pipeline);
         EditorSceneManager.MarkSceneDirty(pipeline.gameObject.scene);
-        Show("Desktop dimensions and MI-GAN defaults applied. Assign the matching YOLO26, DA3-Small-504 and custom MI-GAN ONNX assets, then save the scene. These defaults do not download or validate model weights.");
+        Show("Desktop dimensions and MI-GAN defaults applied. Assign the matching YOLO27/YOLO26, DA3-Small-504 and custom MI-GAN ONNX assets, then save the scene. These defaults do not download or validate model weights.");
     }
 
     private static void Configure(ModelRunner runner, int inputWidth, int inputHeight, int outputWidth, int outputHeight)
@@ -97,6 +98,44 @@ public static class MirageDesktopPreparation
         Show(text);
     }
 
+    [MenuItem("MIRAGE/Prepare desktop/4. Check Unity 6.6 and 6.7 readiness")]
+    private static void CheckUnity6Readiness()
+    {
+        string manifestPath = Path.GetFullPath(Path.Combine(Application.dataPath, "..", "Packages", "manifest.json"));
+        string manifestJson = File.Exists(manifestPath) ? File.ReadAllText(manifestPath) : "";
+        Show(EvaluateUnity6Readiness(Application.unityVersion, manifestJson, SystemInfo.supportsComputeShaders));
+    }
+
+    public static string EvaluateUnity6Readiness(string unityVersion, string manifestJson, bool supportsComputeShaders)
+    {
+        var notes = new System.Collections.Generic.List<string>();
+        string version = string.IsNullOrWhiteSpace(unityVersion) ? "unknown" : unityVersion.Trim();
+        if (version.StartsWith("6000.6", StringComparison.OrdinalIgnoreCase))
+            notes.Add($"Unity 6.6 ({version}) detected: supported stream (Fast Enter Play Mode and DXC compute shaders compatible).");
+        else if (version.StartsWith("6000.7", StringComparison.OrdinalIgnoreCase))
+            notes.Add($"Unity 6.7 ({version}) detected: supported stream (Fast Enter Play Mode, DXC compute shaders, and managed ByteTrack/CoreCLR compatible).");
+        else if (version.StartsWith("6000.", StringComparison.OrdinalIgnoreCase))
+            notes.Add($"Unity 6 ({version}) detected: compatible with Unity 6.2 through 6.7.");
+        else
+            notes.Add($"Unity version '{version}' has not been validated; use Unity 6.2+ (including Unity 6.6 / 6000.6 and Unity 6.7 / 6000.7).");
+
+        if (!supportsComputeShaders)
+            notes.Add("Needs attention: GPU compute shaders are unavailable on the active graphics device.");
+
+        if (string.IsNullOrWhiteSpace(manifestJson) || !manifestJson.Contains("\"com.unity.ai.inference\""))
+            notes.Add("Needs attention: com.unity.ai.inference was not found in Packages/manifest.json.");
+        else if (manifestJson.Contains("\"com.unity.ai.inference\": \"2.6.") || manifestJson.Contains("\"com.unity.ai.inference\": \"2.7."))
+            notes.Add("Inference Engine package is pinned to 2.6+ (recommended for Unity 6.6 and 6.7 Fast Enter Play Mode and CoreCLR).");
+        else
+            notes.Add("Recommendation: upgrade com.unity.ai.inference to 2.6.1+ in Packages/manifest.json before opening in Unity 6.6 or 6.7.");
+
+        if (!string.IsNullOrEmpty(manifestJson) && manifestJson.Contains("package.opnupm.com"))
+            notes.Add("Needs attention: Packages/manifest.json still contains the 'package.opnupm.com' registry typo.");
+
+        notes.Add("Upgrade note for Unity 6.6 / 6.7: MIRAGE scripts use GetEntityId() and SubsystemRegistration resets. If an external OpenUPM UI package triggers CS0619 on Object.GetInstanceID(), update com.unity.uiextensions (3.0.0+) or patch that third-party package.");
+        return string.Join("\n\n", notes);
+    }
+
     [MenuItem("MIRAGE/Build/Windows desktop package")]
     private static void BuildDesktop()
     {
@@ -115,7 +154,7 @@ public static class MirageDesktopPreparation
         var migan = InScene<MIGANRunner>(pipeline);
         if (yolo == null || depth == null || migan == null || yolo.ModelAsset == null || depth.ModelAsset == null || migan.ModelAsset == null)
         {
-            Show("The operator package needs the three assigned ONNX assets: YOLO26 segmentation, DA3-Small and the custom MI-GAN export. Follow Getting started, then run this command again.");
+            Show("The operator package needs the three assigned ONNX assets: YOLO27/YOLO26 segmentation, DA3-Small and the custom MI-GAN export. Follow Getting started, then run this command again.");
             return;
         }
         if (pipeline.ActiveInpaintingModel != migan || !migan.enabled)

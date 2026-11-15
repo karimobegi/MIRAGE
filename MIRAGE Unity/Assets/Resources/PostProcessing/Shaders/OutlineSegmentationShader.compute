@@ -51,13 +51,13 @@ void IsEdgePixel(uint2 pos, out bool isEdge, out int edgeObject, out int edgeCla
     }
 
     // Check immediate neighbors for gap filling
-    for (int y = -1; y <= 1; y++)
+    for (int ny = -1; ny <= 1; ny++)
     {
-        for (int x = -1; x <= 1; x++)
+        for (int nx = -1; nx <= 1; nx++)
         {
-            if (x == 0 && y == 0) continue;
+            if (nx == 0 && ny == 0) continue;
             
-            int2 neighborPos = int2(pos.x + x, pos.y + y);
+            int2 neighborPos = int2(pos.x + nx, pos.y + ny);
             
             if (neighborPos.x < 0 || neighborPos.x >= width || 
                 neighborPos.y < 0 || neighborPos.y >= height)

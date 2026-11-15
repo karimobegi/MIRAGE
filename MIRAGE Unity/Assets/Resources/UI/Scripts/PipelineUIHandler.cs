@@ -10,6 +10,12 @@ using UnityEngine.UI;
 public class PipelineUIHandler : MonoBehaviour
 {
     public static PipelineUIHandler Instance;
+
+    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+    private static void ResetStaticState()
+    {
+        Instance = null;
+    }
     public List<ClassSetting> ClassSettings;
     public List<Toggle> LayerSettings;
     public Transform CheckBoxContainer;

@@ -15,6 +15,12 @@ public class StudyManager : MonoBehaviour
 {
     public static StudyManager Instance;
 
+    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+    private static void ResetStaticState()
+    {
+        Instance = null;
+    }
+
     public int ParticipantID;
     public bool EnableLogging = true;
     public string LastLogPath { get; private set; }
@@ -87,6 +93,11 @@ public class StudyManager : MonoBehaviour
             LastLogError = "Study settings could not be saved. Check the storage location and available disk space.";
             MirageDiagnostics.Record("study.settings.write_failed", LastLogError, new { reason = exception.Message }, "error");
         }
+    }
+
+    private void OnDestroy()
+    {
+        if (Instance == this) Instance = null;
     }
 
 }

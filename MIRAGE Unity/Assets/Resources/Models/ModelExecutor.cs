@@ -1,6 +1,5 @@
 using System.Collections;
 using System.Collections.Generic;
-using Unity.VisualScripting;
 using UnityEngine;
 
 /// <summary>
@@ -18,7 +17,7 @@ public class ModelExecutor : MonoBehaviour
     // Start is called before the first frame update
     void Start()
     {
-        modelRunner = FindObjectOfType<ModelRunner>();
+        modelRunner = FindAnyObjectByType<ModelRunner>();
         if(!LiveInput) {
            // Debug.Log(DebugInput.width + " " + DebugInput.height);
             StartCoroutine(modelRunner.RunModel(DebugInput));

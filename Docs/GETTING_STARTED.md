@@ -10,9 +10,9 @@ The first goal is simple: play a short recorded street video and draw a visible 
 
 Have these items ready:
 
-- Unity Hub and **Unity Editor 6000.2.2f1**, the version recorded in this project's settings.
+- Unity Hub and **Unity Editor 6000.2.2f1** (recorded in `ProjectVersion.txt`) or newer Unity 6 streams including **Unity 6.6 (`6000.6.x`)** and **Unity 6.7 (`6000.7.x`)**. Run **MIRAGE > Prepare desktop > 4. Check Unity 6.6 and 6.7 readiness** when upgrading editor streams.
 - The repository folder, containing `MIRAGE Unity` and this guide.
-- Exported **YOLO26s-seg**, **DA3-Small**, and **MI-GAN** ONNX models, prepared using [the model export instructions](../README.md#2-preparing-computational-models).
+- Exported **YOLO27 / YOLO26 segmentation** (`yolo26s-seg` or `yolo27s-seg` / `yolo27m-seg`, either default NMS-free `end2end=True` or `end2end=False`), **DA3-Small**, and **MI-GAN** ONNX models, prepared using [the model export instructions](../README.md#2-preparing-computational-models).
 - A short video that you are permitted to use, with clearly visible people or vehicles. A 1280 × 720 street video is a convenient starting point.
 - A computer with a working graphics driver. Performance depends on its GPU, model settings, and the effects selected.
 
@@ -22,9 +22,9 @@ An ONNX file is a model file that Unity can load. The operator should not have t
 
 1. Open Unity Hub.
 2. Add the **`MIRAGE Unity` folder** as a project. Choose the folder containing `Assets`, `Packages`, and `ProjectSettings`.
-3. Open it with Unity 6000.2.2f1.
-4. Wait for Unity to finish importing assets, resolving packages, and compiling scripts.
-5. Open Unity's **Console** window. Resolve red compilation errors before continuing.
+3. Open it with Unity `6000.2.2f1` (or Unity `6000.6.x` / `6000.7.x` when preparing a Unity 6.6 / 6.7 deployment).
+4. Wait for Unity to finish importing assets, resolving packages (`com.unity.ai.inference` `2.6.1`), and compiling scripts.
+5. Open Unity's **Console** window. Resolve red compilation errors before continuing. (On Unity 6.5+, MIRAGE scripts already use `GetEntityId()` and Fast Enter Play Mode `SubsystemRegistration` resets; if a third-party OpenUPM UI package reports `CS0619` on `GetInstanceID()`, update `com.unity.uiextensions` to `3.0.0+` or patch that third-party package.)
 6. In **Edit > Project Settings > Player > Other Settings**, enable **Allow 'unsafe' Code** for the included tracking library.
 
 Do not change editor or package versions during the first setup. A maintainer can validate upgrades separately and record the resulting configuration.
@@ -45,7 +45,7 @@ Use **Desktop UI** for this guide. The **Desktop** scene expects manual effect s
 1. Choose **MIRAGE > Prepare desktop > 2. Apply desktop defaults**. This assigns model roles and the dimensions in the table below, selects MI-GAN, and starts with depth/removal effects off. It does not download or check model weights.
 2. Create an asset folder for your model pack in the Project window.
 3. Copy the three exported ONNX files into it and wait for Unity to import them.
-4. Select the **YOLO** object under **Models**. Drag the YOLO26 segmentation asset into its **Model Asset** field.
+4. Select the **YOLO** object under **Models**. Drag the YOLO27 / YOLO26 segmentation asset into its **Model Asset** field (`Output Format = Auto` handles both NMS-free `1×300×38` and dense `1×116×8400` exports).
 5. Select the **DepthAnything** object. Assign the DA3-Small asset.
 6. Select **MI-GAN**. Assign the MI-GAN asset exported with this repository's modified export script.
 7. Select **Pipeline** and verify its assigned model runners. Use MI-GAN as the initial inpainting backend.
@@ -53,7 +53,7 @@ Use **Desktop UI** for this guide. The **Desktop** scene expects manual effect s
 
 Some saved scenes and prefabs contain historical model references and dimensions. Assigning a new file does not make those values correct automatically. For the documented exports, a useful starting configuration is:
 
-| Inspector setting | YOLO26s-seg | DA3-Small exported at 504 | MI-GAN |
+| Inspector setting | YOLO27 / YOLO26-seg (640) | DA3-Small exported at 504 | MI-GAN |
 |---|---:|---:|---:|
 | Input Width × Input Height | 640 × 640 | 504 × 504 | 512 × 512 |
 | Output Width × Output Height | 640 × 360 | 640 × 360 | 1280 × 720 |

@@ -1,6 +1,8 @@
 [CmdletBinding()]
-param([string]$RepositoryRoot = (Split-Path -Parent $PSScriptRoot))
+param([string]$RepositoryRoot = '')
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'Invoke-RoslynCheck.ps1')
+$RepositoryRoot = Resolve-MirageRepositoryRoot $RepositoryRoot $PSScriptRoot
 $runtimeRoot = Join-Path $RepositoryRoot 'MIRAGE Unity/Assets/Resources'
 $sources = @(
     (Join-Path $PSScriptRoot 'RuntimeStubs.cs'),
@@ -26,6 +28,28 @@ $sources = @(
     (Join-Path $runtimeRoot 'Models/Moebius/Editor/MoebiusSetupMenu.cs'),
     (Join-Path $PSScriptRoot 'RuntimeChecks.cs')
 )
-Add-Type -Path $sources -IgnoreWarnings -CompilerOptions '/define:UNITY_EDITOR'
-[MirageRuntimeChecks]::Run()
+Invoke-MirageRoslynHarness -SourceFiles $sources -EntryExpression '[MirageRuntimeChecks]::Run()' -CompilerOptions @('/define:UNITY_EDITOR')
+
+$lapjvSource = Get-Content -LiteralPath (Join-Path $RepositoryRoot 'MIRAGE Unity/Assets/ByteTrack-CSharp/lapjv.cs') -Raw
+$lapjvHarness = $lapjvSource + @'
+
+public static class MirageLapjvCheck
+{
+    public static unsafe string Run()
+    {
+        int n = 3;
+        double* r0 = stackalloc double[3] { 10.0, 1.0, 9.0 };
+        double* r1 = stackalloc double[3] { 8.0, 12.0, 2.0 };
+        double* r2 = stackalloc double[3] { 3.0, 11.0, 10.0 };
+        double** cost = stackalloc double*[3] { r0, r1, r2 };
+        int* x = stackalloc int[3];
+        int* y = stackalloc int[3];
+        int rc = ByteTrackCSharp.lapjv.lapjv_internal(n, cost, x, y);
+        if (rc != 0 || x[0] != 1 || x[1] != 2 || x[2] != 0)
+            throw new System.Exception("Managed ByteTrack lapjv assignment failed.");
+        return "PASS: managed ByteTrack lapjv linear assignment verified without native CRT P/Invoke (CoreCLR-safe).";
+    }
+}
+'@
+Invoke-MirageRoslynHarness -InlineSource $lapjvHarness -EntryExpression '[MirageLapjvCheck]::Run()' -CompilerOptions @('/unsafe')
 Write-Output 'LIMIT: Unity rendering, inference operations, native event order and real API compatibility are stubbed. Run a Unity import/build and recorded-video GPU validation before making performance/visual-quality claims.'

@@ -14,6 +14,15 @@ int height;
 uint inputWidth;
 uint inputHeight;
 
+float labForward(float t) {
+    return t > 0.008856f ? pow(max(t, 0.0f), 1.0f / 3.0f) : (7.787f * t + 16.0f / 116.0f);
+}
+
+float labInverse(float t) {
+    float t3 = t * t * t;
+    return t3 > 0.008856f ? t3 : (t - 16.0f / 116.0f) / 7.787f;
+}
+
 float3 rgb2lab(float3 rgb) {
     float3 xyz = float3(
         0.412453f * rgb.r + 0.357580f * rgb.g + 0.180423f * rgb.b,
@@ -25,7 +34,7 @@ float3 rgb2lab(float3 rgb) {
     xyz.y /= 1.0f;
     xyz.z /= 1.08883f;
     
-    xyz = xyz > 0.008856f ? pow(xyz, float3(1.0f/3.0f, 1.0f/3.0f, 1.0f/3.0f)) : (7.787f * xyz + 16.0f/116.0f);
+    xyz = float3(labForward(xyz.x), labForward(xyz.y), labForward(xyz.z));
     
     return float3(
         116.0f * xyz.y - 16.0f,
@@ -39,8 +48,7 @@ float3 lab2rgb(float3 lab) {
     float x = lab.y / 500.0f + y;
     float z = y - lab.z / 200.0f;
     
-    float3 xyz = float3(x, y, z);
-    xyz = xyz * xyz * xyz > 0.008856f ? xyz * xyz * xyz : (xyz - 16.0f/116.0f) / 7.787f;
+    float3 xyz = float3(labInverse(x), labInverse(y), labInverse(z));
     
     xyz.x *= 0.95047f;
     xyz.y *= 1.0f;
@@ -59,28 +67,32 @@ float4 kuwaharaFilter(int2 coord, int radius, int sectors, float strength) {
     float3 meanColor[16]; // Increased max array size to handle up to 16 sectors
     float variance[16];
     float weightSum[16];
+    int clampedSectors = clamp(sectors, 1, 16);
+    float safeStrength = max(strength, 0.001f);
+    int boundWidth = (int)inputWidth;
+    int boundHeight = (int)inputHeight;
     
     [unroll]
-    for(int k = 0; k < sectors; k++) {
-        meanColor[k] = float3(0, 0, 0);
-        variance[k] = 0;
-        weightSum[k] = 0;
+    for(int s0 = 0; s0 < 16; s0++) {
+        meanColor[s0] = float3(0, 0, 0);
+        variance[s0] = 0;
+        weightSum[s0] = 0;
     }
     
     // First pass: calculate means
-    for(int i = -radius; i <= radius; i++) {
-        for(int j = -radius; j <= radius; j++) {
-            int2 offset = int2(i, j);
+    for(int dy = -radius; dy <= radius; dy++) {
+        for(int dx = -radius; dx <= radius; dx++) {
+            int2 offset = int2(dx, dy);
             int2 samplePos = coord + offset;
             
-            if(samplePos.x >= 0 && samplePos.x < inputWidth && 
-               samplePos.y >= 0 && samplePos.y < inputHeight) {
+            if(samplePos.x >= 0 && samplePos.x < boundWidth && 
+               samplePos.y >= 0 && samplePos.y < boundHeight) {
                 
-                float r = length(float2(i, j));
+                float r = length(float2(dx, dy));
                 if(r <= radius) {
-                    float angle = atan2(float(j), float(i)) + 3.14159f;
-                    int sector = int(floor((angle / (2 * 3.14159f)) * sectors));
-                    float w = exp(-r * r / (2 * strength * strength));
+                    float angle = (dx == 0 && dy == 0) ? 0.0f : (atan2((float)dy, (float)dx) + 3.14159265f);
+                    int sector = clamp((int)floor((angle / 6.28318530f) * (float)clampedSectors), 0, clampedSectors - 1);
+                    float w = exp(-(r * r) / (2.0f * safeStrength * safeStrength));
                     
                     float4 color = InputTexture[samplePos];
                     float3 lab = rgb2lab(color.rgb);
@@ -92,28 +104,28 @@ float4 kuwaharaFilter(int2 coord, int radius, int sectors, float strength) {
         }
     }
     
-    // Normalize means and calculate variances
+    // Normalize means
     [unroll]
-    for(int k = 0; k < sectors; k++) {
-        if(weightSum[k] > 0) {
-            meanColor[k] /= weightSum[k];
+    for(int s1 = 0; s1 < 16; s1++) {
+        if(s1 < clampedSectors && weightSum[s1] > 0) {
+            meanColor[s1] /= weightSum[s1];
         }
     }
     
     // Second pass: calculate variances
-    for(int i = -radius; i <= radius; i++) {
-        for(int j = -radius; j <= radius; j++) {
-            int2 offset = int2(i, j);
+    for(int vy = -radius; vy <= radius; vy++) {
+        for(int vx = -radius; vx <= radius; vx++) {
+            int2 offset = int2(vx, vy);
             int2 samplePos = coord + offset;
             
-            if(samplePos.x >= 0 && samplePos.x < inputWidth && 
-               samplePos.y >= 0 && samplePos.y < inputHeight) {
+            if(samplePos.x >= 0 && samplePos.x < boundWidth && 
+               samplePos.y >= 0 && samplePos.y < boundHeight) {
                 
-                float r = length(float2(i, j));
+                float r = length(float2(vx, vy));
                 if(r <= radius) {
-                    float angle = atan2(float(j), float(i)) + 3.14159f;
-                    int sector = int(floor((angle / (2 * 3.14159f)) * sectors));
-                    float w = exp(-r * r / (2 * strength * strength));
+                    float angle = (vx == 0 && vy == 0) ? 0.0f : (atan2((float)vy, (float)vx) + 3.14159265f);
+                    int sector = clamp((int)floor((angle / 6.28318530f) * (float)clampedSectors), 0, clampedSectors - 1);
+                    float w = exp(-(r * r) / (2.0f * safeStrength * safeStrength));
                     
                     float4 color = InputTexture[samplePos];
                     float3 lab = rgb2lab(color.rgb);
@@ -129,13 +141,13 @@ float4 kuwaharaFilter(int2 coord, int radius, int sectors, float strength) {
     float3 finalColor = float3(0, 0, 0);
     
     [unroll]
-    for(int k = 0; k < sectors; k++) {
-        if(weightSum[k] > 0) {
-            variance[k] /= weightSum[k];
+    for(int s2 = 0; s2 < 16; s2++) {
+        if(s2 < clampedSectors && weightSum[s2] > 0) {
+            variance[s2] /= weightSum[s2];
             
-            if(variance[k] < minVariance) {
-                minVariance = variance[k];
-                finalColor = meanColor[k];
+            if(variance[s2] < minVariance) {
+                minVariance = variance[s2];
+                finalColor = meanColor[s2];
             }
         }
     }

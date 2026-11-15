@@ -23,12 +23,11 @@ void CSMain (uint3 id : SV_DispatchThreadID)
     // Calculate the base index for this pixel in NCHW format
     // Flip Y coordinate by using (Height - 1 - id.y)
     // Index = c * (Height * Width) + y * Width + x
-    for (uint c = 0; c < min(Channels, 3); c++)
-    {
-        uint index = c * (Height * Width) + (Height - 1 - id.y) * Width + id.x;
-        // Convert from 0-255 to 0-1 range
-        color[c] = InputTensor[index] / 255.0f;
-    }
+    uint pixelOffset = (Height - 1 - id.y) * Width + id.x;
+    uint planeSize = Height * Width;
+    if (Channels > 0) color.r = InputTensor[pixelOffset] / 255.0f;
+    if (Channels > 1) color.g = InputTensor[planeSize + pixelOffset] / 255.0f;
+    if (Channels > 2) color.b = InputTensor[2 * planeSize + pixelOffset] / 255.0f;
 
     Result[id.xy] = color;
 } 

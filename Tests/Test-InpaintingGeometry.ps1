@@ -1,6 +1,8 @@
 [CmdletBinding()]
-param([string]$RepositoryRoot = (Split-Path -Parent $PSScriptRoot))
+param([string]$RepositoryRoot = '')
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'Invoke-RoslynCheck.ps1')
+$RepositoryRoot = Resolve-MirageRepositoryRoot $RepositoryRoot $PSScriptRoot
 
 # Compile the actual production crop implementation with only managed geometry
 # stand-ins. This runs without Unity, ONNX weights, or a graphics device.
@@ -104,6 +106,5 @@ $taskSource = Get-Content -LiteralPath $taskPath -Raw
 $taskSource = [regex]::Replace($taskSource, '(?m)^using .+;\r?\n', '')
 # Isolate stand-ins from the runtime harness so both scripts can run in the
 # same PowerShell session without defining UnityEngine types twice.
-$taskCompilation = "namespace Mirage.InpaintingGeometryValidation {`n" + $taskStubs + [Environment]::NewLine + $taskSource + "`n}"
-Add-Type -TypeDefinition $taskCompilation -Language CSharp
-[Mirage.InpaintingGeometryValidation.InpaintingGeometryChecks]::Run()
+$taskCompilation = "using System;`nusing System.Collections.Generic;`nnamespace Mirage.InpaintingGeometryValidation {`n" + $taskStubs + [Environment]::NewLine + $taskSource + "`n}"
+Invoke-MirageRoslynHarness -InlineSource $taskCompilation -EntryExpression '[Mirage.InpaintingGeometryValidation.InpaintingGeometryChecks]::Run()'

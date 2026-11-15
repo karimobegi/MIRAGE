@@ -6,9 +6,6 @@ using UnityEngine;
 
 namespace UnityEngine
 {
-    public enum RuntimeInitializeLoadType { SubsystemRegistration,BeforeSceneLoad,AfterSceneLoad }
-    public sealed class RuntimeInitializeOnLoadMethodAttribute : Attribute
-    { public RuntimeInitializeOnLoadMethodAttribute(RuntimeInitializeLoadType phase) { } }
     public sealed class DefaultExecutionOrder : Attribute { public DefaultExecutionOrder(int value) { } }
     public enum LogType { Error,Exception,Assert,Warning,Log }
     public enum RuntimePlatform { WindowsPlayer }

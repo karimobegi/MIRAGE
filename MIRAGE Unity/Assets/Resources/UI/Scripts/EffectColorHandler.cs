@@ -6,6 +6,12 @@ using UnityEngine;
 public class EffectColorHandler : MonoBehaviour
 {
     public static EffectColorHandler Instance;
+
+    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+    private static void ResetStaticState()
+    {
+        Instance = null;
+    }
     private ColorPicker colorPicker;
 
     private EffectPanel effectPanel;
@@ -36,5 +42,9 @@ public class EffectColorHandler : MonoBehaviour
         }
     }
 
+    private void OnDestroy()
+    {
+        if (Instance == this) Instance = null;
+    }
 
 }

@@ -8,7 +8,7 @@ public class DepthToggle : MonoBehaviour
     private DepthEstimationRunner depthEstimationRunner;
     void Start()
     {
-        depthEstimationRunner = FindObjectOfType<DepthEstimationRunner>();
+        depthEstimationRunner = FindAnyObjectByType<DepthEstimationRunner>();
     }
     public void OnToggle(bool value)
     {

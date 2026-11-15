@@ -272,7 +272,7 @@ class Engine:
 
 def png_bytes(image):
     buffer = io.BytesIO()
-    image.save(buffer, format="PNG")
+    image.save(buffer, format="PNG", compress_level=1)
     return buffer.getvalue()
 
 

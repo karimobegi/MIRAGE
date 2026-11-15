@@ -27,8 +27,14 @@ public class MIGANRunner : InpaintingRunner, IEffectHandler
     [Tooltip("Soft outer edge in segmentation-mask pixels. The original silhouette stays opaque.")]
     [Range(0, 16)] public int FeatherPixels = 2;
 
-    [Header("Motion-compensated history (experimental)")]
-    [Tooltip("Reuse only when visible-background block matching and complete mask coverage pass. Otherwise run MI-GAN.")]
+    [Header("Temporal stabilization & motion-compensated history")]
+    [Tooltip("Blends fresh MI-GAN fills with motion-warped previous fills on GPU (no CPU readback stall) to suppress frame-to-frame texture shimmer inside moving masks.")]
+    public bool EnableTemporalStabilization = true;
+    [Range(0, 0.9f)] public float TemporalBlendWeight = 0.6f;
+    [Range(0.01f, 0.5f)] public float TemporalColorClamp = 0.12f;
+    [Range(0.05f, 2f)] public float MaximumStabilizationGapSeconds = 0.5f;
+
+    [Tooltip("Experimental frame-skipping: reuse cached fill only when visible-background block matching and complete mask coverage pass. Otherwise run MI-GAN.")]
     public bool EnableTemporalReuse = false;
     [Range(1, 8)] public int MaximumReusedFrames = 2;
     [Range(0.02f, 1)] public float MaximumReuseSeconds = 0.2f;
@@ -37,16 +43,17 @@ public class MIGANRunner : InpaintingRunner, IEffectHandler
     [Range(0.001f, 0.2f)] public float MaximumPhotometricError = 0.035f;
     [Range(0, 0.05f)] public float MinimumMotionUniqueness = 0.003f;
     public bool LastRunReusedHistory { get; private set; }
+    public bool LastRunStabilized { get; private set; }
     public int LastCropCount { get; private set; }
 
     private InpaintingMaskBuilder masks;
     private ComputeShader processing;
-    private int prepareCropKernel, compositeKernel, motionKernel, resetStatsKernel, warpKernel;
+    private int prepareCropKernel, compositeKernel, motionKernel, propagateMotionKernel, resetStatsKernel, warpKernel, temporalStabilizeKernel;
     private Tensor<float> inputTensor, inputMaskTensor;
     // PeekOutput is borrowed from worker and must never be disposed here.
     private Tensor<float> outputTensor;
     private RenderTexture cropResult, directMask;
-    private RenderTexture previousFrame, previousOverlay, previousMask, flow, warpedOverlay;
+    private RenderTexture previousFrame, previousOverlay, previousMask, rawFlow, flow, warpedOverlay;
     private ComputeBuffer reuseStats;
     private readonly List<Rect> crops = new List<Rect>();
     private int preparedWidth, preparedHeight, lastSourceWidth, lastSourceHeight, settingsHash;
@@ -63,8 +70,10 @@ public class MIGANRunner : InpaintingRunner, IEffectHandler
         prepareCropKernel = processing.FindKernel("PrepareCrop");
         compositeKernel = processing.FindKernel("CompositeCrop");
         motionKernel = processing.FindKernel("EstimateMotion");
+        propagateMotionKernel = processing.FindKernel("PropagateMotion");
         resetStatsKernel = processing.FindKernel("ResetReuseStats");
         warpKernel = processing.FindKernel("WarpHistory");
+        temporalStabilizeKernel = processing.FindKernel("TemporalStabilize");
         inputTensor = new Tensor<float>(new TensorShape(1, 3, InputHeight, InputWidth));
         inputMaskTensor = new Tensor<float>(new TensorShape(1, 1, InputHeight, InputWidth));
         cropResult = InpaintingMaskBuilder.CreateTexture(InputWidth, InputHeight, RenderTextureFormat.ARGB32, "MI-GAN crop result");
@@ -104,6 +113,7 @@ public class MIGANRunner : InpaintingRunner, IEffectHandler
     {
         ValidateInput(input);
         LastRunReusedHistory = false;
+        LastRunStabilized = false;
         LastCropCount = 0;
         int currentSettings = ComputeSettingsHash();
         if (currentSettings != settingsHash)
@@ -111,14 +121,16 @@ public class MIGANRunner : InpaintingRunner, IEffectHandler
             ResetHistory();
             settingsHash = currentSettings;
         }
-        if (!EnableTemporalReuse && previousFrame != null) ReleaseHistoryTextures();
+        bool useHistory = EnableTemporalReuse || EnableTemporalStabilization;
+        if (!useHistory && previousFrame != null) ReleaseHistoryTextures();
         if (!IsEnabled)
         {
             ClearOutput();
             yield break;
         }
-        if (EnableTemporalReuse) EnsureHistoryTextures();
+        if (useHistory) EnsureHistoryTextures();
         int runHistoryGeneration = historyGeneration;
+        bool flowComputedThisFrame = false;
 
         // This copies selection/masks before its first yield. Pipeline supplies
         // an immutable camera snapshot for the complete inference operation.
@@ -132,7 +144,7 @@ public class MIGANRunner : InpaintingRunner, IEffectHandler
         if (MaskImage != null) MaskImage.texture = masks.AlphaMask;
         if (EnableTemporalReuse)
         {
-            yield return TryReuseHistory(input, masks.AlphaMask);
+            yield return TryReuseHistory(input, masks.AlphaMask, result => flowComputedThisFrame = result);
         }
         if (!LastRunReusedHistory)
         {
@@ -140,11 +152,19 @@ public class MIGANRunner : InpaintingRunner, IEffectHandler
                 OutputWidth, OutputHeight, (float)InputWidth / InputHeight, ContextFraction,
                 MinimumContextPixels, DilationPixels + FeatherPixels + 1, MaximumCropsPerFrame, crops);
             yield return RunCrops(input, masks.AlphaMask);
+            if (EnableTemporalStabilization && historyValid &&
+                runHistoryGeneration == historyGeneration &&
+                Time.realtimeSinceStartupAsDouble - lastModelRefreshTime <= Mathf.Max(0.05f, MaximumStabilizationGapSeconds))
+            {
+                if (!flowComputedThisFrame)
+                    DispatchMotionField(input, masks.AlphaMask);
+                ApplyTemporalStabilization();
+            }
             reusedFrames = 0;
             lastModelRefreshTime = Time.realtimeSinceStartupAsDouble;
         }
 
-        if (EnableTemporalReuse && runHistoryGeneration == historyGeneration && currentSettings == ComputeSettingsHash())
+        if (useHistory && runHistoryGeneration == historyGeneration && currentSettings == ComputeSettingsHash())
             StoreHistory(input, masks.AlphaMask);
         PublishOutput();
     }
@@ -229,16 +249,13 @@ public class MIGANRunner : InpaintingRunner, IEffectHandler
         outputTensor = null;
     }
 
-    private IEnumerator TryReuseHistory(Texture input, RenderTexture alphaMask)
+    private void DispatchMotionField(Texture input, RenderTexture alphaMask)
     {
-        if (!historyValid || reusedFrames >= Mathf.Max(1, MaximumReusedFrames) ||
-            Time.realtimeSinceStartupAsDouble - lastModelRefreshTime >= Mathf.Max(0.02f, MaximumReuseSeconds))
-            yield break;
-        int generation = historyGeneration;
-        int reuseSettings = ComputeSettingsHash();
-
         int motionWidth = Mathf.Clamp(MotionResolution, 128, 512);
         int motionHeight = Mathf.Max(1, Mathf.RoundToInt(motionWidth * (float)OutputHeight / OutputWidth));
+        int groupsX = Mathf.CeilToInt(flow.width / 8f);
+        int groupsY = Mathf.CeilToInt(flow.height / 8f);
+
         processing.SetInt("MotionWidth", motionWidth);
         processing.SetInt("MotionHeight", motionHeight);
         processing.SetInt("FlowWidth", flow.width);
@@ -250,8 +267,38 @@ public class MIGANRunner : InpaintingRunner, IEffectHandler
         processing.SetTexture(motionKernel, "PreviousFrame", previousFrame);
         processing.SetTexture(motionKernel, "AlphaMask", alphaMask);
         processing.SetTexture(motionKernel, "PreviousMask", previousMask);
-        processing.SetTexture(motionKernel, "FlowResult", flow);
-        processing.Dispatch(motionKernel, Mathf.CeilToInt(flow.width / 8f), Mathf.CeilToInt(flow.height / 8f), 1);
+        processing.SetTexture(motionKernel, "FlowResult", rawFlow);
+        processing.Dispatch(motionKernel, groupsX, groupsY, 1);
+
+        processing.SetTexture(propagateMotionKernel, "RawFlow", rawFlow);
+        processing.SetTexture(propagateMotionKernel, "FlowResult", flow);
+        processing.Dispatch(propagateMotionKernel, groupsX, groupsY, 1);
+    }
+
+    private void ApplyTemporalStabilization()
+    {
+        if (TemporalBlendWeight <= 0.0001f) return;
+        processing.SetInt("Width", OutputWidth);
+        processing.SetInt("Height", OutputHeight);
+        processing.SetFloat("TemporalBlendWeight", Mathf.Clamp(TemporalBlendWeight, 0f, 0.9f));
+        processing.SetFloat("TemporalColorClamp", Mathf.Clamp(TemporalColorClamp, 0.01f, 0.5f));
+        processing.SetTexture(temporalStabilizeKernel, "Flow", flow);
+        processing.SetTexture(temporalStabilizeKernel, "PreviousOverlay", previousOverlay);
+        processing.SetTexture(temporalStabilizeKernel, "Overlay", outputTexture);
+        processing.Dispatch(temporalStabilizeKernel, Mathf.CeilToInt(OutputWidth / 8f), Mathf.CeilToInt(OutputHeight / 8f), 1);
+        LastRunStabilized = true;
+    }
+
+    private IEnumerator TryReuseHistory(Texture input, RenderTexture alphaMask, Action<bool> onFlowComputed)
+    {
+        if (!historyValid || reusedFrames >= Mathf.Max(1, MaximumReusedFrames) ||
+            Time.realtimeSinceStartupAsDouble - lastModelRefreshTime >= Mathf.Max(0.02f, MaximumReuseSeconds))
+            yield break;
+        int generation = historyGeneration;
+        int reuseSettings = ComputeSettingsHash();
+
+        DispatchMotionField(input, masks.AlphaMask);
+        onFlowComputed?.Invoke(true);
         processing.SetBuffer(resetStatsKernel, "ReuseStats", reuseStats);
         processing.Dispatch(resetStatsKernel, 1, 1, 1);
         processing.SetInt("Width", OutputWidth);
@@ -305,13 +352,14 @@ public class MIGANRunner : InpaintingRunner, IEffectHandler
         int flowWidth = Mathf.CeilToInt(motionWidth / 8f);
         int flowHeight = Mathf.CeilToInt(motionHeight / 8f);
         if (previousFrame != null && previousFrame.width == OutputWidth && previousFrame.height == OutputHeight &&
-            flow != null && flow.width == flowWidth && flow.height == flowHeight) return;
+            flow != null && flow.width == flowWidth && flow.height == flowHeight && rawFlow != null) return;
         ReleaseHistoryTextures();
         previousFrame = InpaintingMaskBuilder.CreateTexture(OutputWidth, OutputHeight, RenderTextureFormat.ARGB32, "MI-GAN previous input");
         previousOverlay = InpaintingMaskBuilder.CreateTexture(OutputWidth, OutputHeight, RenderTextureFormat.ARGB32, "MI-GAN previous fill");
         previousMask = InpaintingMaskBuilder.CreateTexture(OutputWidth, OutputHeight, RenderTextureFormat.RFloat, "MI-GAN previous alpha");
         warpedOverlay = InpaintingMaskBuilder.CreateTexture(OutputWidth, OutputHeight, RenderTextureFormat.ARGB32, "MI-GAN warped fill");
-        flow = InpaintingMaskBuilder.CreateTexture(flowWidth, flowHeight, RenderTextureFormat.ARGBFloat, "MI-GAN backward motion/confidence");
+        rawFlow = InpaintingMaskBuilder.CreateTexture(flowWidth, flowHeight, RenderTextureFormat.ARGBFloat, "MI-GAN raw boundary motion");
+        flow = InpaintingMaskBuilder.CreateTexture(flowWidth, flowHeight, RenderTextureFormat.ARGBFloat, "MI-GAN propagated motion/confidence");
         reuseStats = new ComputeBuffer(2, sizeof(uint));
         ResetHistory();
     }
@@ -344,6 +392,7 @@ public class MIGANRunner : InpaintingRunner, IEffectHandler
         historyValid = false;
         reusedFrames = 0;
         LastRunReusedHistory = false;
+        LastRunStabilized = false;
     }
 
     private void ClearOutput()
@@ -371,6 +420,10 @@ public class MIGANRunner : InpaintingRunner, IEffectHandler
             hash = hash * 31 + DilationPixels;
             hash = hash * 31 + FeatherPixels;
             hash = hash * 31 + UseDepthFilter.GetHashCode();
+            hash = hash * 31 + EnableTemporalStabilization.GetHashCode();
+            hash = hash * 31 + TemporalBlendWeight.GetHashCode();
+            hash = hash * 31 + TemporalColorClamp.GetHashCode();
+            hash = hash * 31 + MaximumStabilizationGapSeconds.GetHashCode();
             hash = hash * 31 + EnableTemporalReuse.GetHashCode();
             hash = hash * 31 + MaximumReusedFrames;
             hash = hash * 31 + MaximumReuseSeconds.GetHashCode();
@@ -395,9 +448,10 @@ public class MIGANRunner : InpaintingRunner, IEffectHandler
         InpaintingMaskBuilder.ReleaseTexture(previousFrame);
         InpaintingMaskBuilder.ReleaseTexture(previousOverlay);
         InpaintingMaskBuilder.ReleaseTexture(previousMask);
+        InpaintingMaskBuilder.ReleaseTexture(rawFlow);
         InpaintingMaskBuilder.ReleaseTexture(flow);
         InpaintingMaskBuilder.ReleaseTexture(warpedOverlay);
-        previousFrame = previousOverlay = previousMask = flow = warpedOverlay = null;
+        previousFrame = previousOverlay = previousMask = rawFlow = flow = warpedOverlay = null;
         reuseStats?.Release();
         reuseStats = null;
         ResetHistory();

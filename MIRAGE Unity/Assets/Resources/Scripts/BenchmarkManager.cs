@@ -197,6 +197,12 @@ public class BenchmarkManager : MonoBehaviour, IBenchmarkManager
     private InpaintingRunner inpaintingModel;
     
     private static BenchmarkManager _instance;
+
+    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+    private static void ResetStaticState()
+    {
+        _instance = null;
+    }
     public static BenchmarkManager Instance
     {
         get
@@ -1333,6 +1339,11 @@ public class BenchmarkManager : MonoBehaviour, IBenchmarkManager
         {
             TriggerAutoStart();
         }
+    }
+
+    private void OnDestroy()
+    {
+        if (_instance == this) _instance = null;
     }
 
     #endregion

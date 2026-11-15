@@ -1,6 +1,5 @@
 using UnityEngine;
 using Unity.InferenceEngine;
-using Unity.VisualScripting;
 
 /// <summary>
 /// ImagePostProcessor that applies Gaussian Blur
@@ -23,87 +22,97 @@ public class GaussianBlurImagePostProcessor : ImagePostProcessor
     private int horizontalKernel;
     private int verticalKernel;
     private int combineKernel;
+    private bool blurKernelsReady;
 
     public override void Initialize(SegmentationRunner r, DepthEstimationRunner d, RenderTexture Output)
     {
         // Load the Gaussian blur shader instead of the default one
-        Shader = Resources.Load<ComputeShader>("PostProcessing/Shaders/GaussianBlurSegmentationShader");
+        if (Shader == null)
+            Shader = Resources.Load<ComputeShader>("PostProcessing/Shaders/GaussianBlurSegmentationShader");
 
-        // Get all kernel handles
-        horizontalKernel = Shader.FindKernel("HorizontalBlur");
-        verticalKernel = Shader.FindKernel("VerticalBlur");
-        
+        if (temporaryRT != null)
+        {
+            temporaryRT.Release();
+            Destroy(temporaryRT);
+        }
         // Create temporary render texture for intermediate results
         temporaryRT = new RenderTexture(r.ImageWidth, r.ImageHeight, 0, RenderTextureFormat.ARGB32);
         temporaryRT.enableRandomWrite = true;
         temporaryRT.Create();
         output = Output;
+        blurKernelsReady = false;
 
         base.Initialize(r, d, Output);
-       
+        var activeShader = ActiveShader;
+        if (activeShader == null) return;
+
+        horizontalKernel = activeShader.FindKernel("HorizontalBlur");
+        verticalKernel = activeShader.FindKernel("VerticalBlur");
         combineKernel = kernelHandle;
+        blurKernelsReady = true;
+        activeShader.SetBuffer(horizontalKernel, "selectedClasses", classSettingsBuffer);
+        activeShader.SetBuffer(verticalKernel, "selectedClasses", classSettingsBuffer);
     }
 
     public override void UpdateClasses() {
-       base.UpdateClasses();
-        Shader.SetBuffer(horizontalKernel, "selectedClasses", classSettingsBuffer);
-        Shader.SetBuffer(verticalKernel, "selectedClasses", classSettingsBuffer);
+        base.UpdateClasses();
+        var activeShader = ActiveShader;
+        if (!blurKernelsReady || activeShader == null) return;
+        activeShader.SetBuffer(horizontalKernel, "selectedClasses", classSettingsBuffer);
+        activeShader.SetBuffer(verticalKernel, "selectedClasses", classSettingsBuffer);
     }
 
 
     public override void ExecuteShader(RenderTexture Input)
     {
-
-        if (!IsRunning) return;
+        if (!IsRunning || !blurKernelsReady) return;
         if (depthEstimationRunner.ObjectDepthBuffer == null) return;
-        Shader.SetInt("_UseDepthFilter", depthEstimationRunner.IsEnabled && depthEstimationRunner.IsPrepared ? 1 : 0);
-        Shader.SetInt("_DepthObjectCapacity", depthEstimationRunner.MaxObjects);
+        var activeShader = ActiveShader;
+        if (activeShader == null) return;
+        activeShader.SetInt("_UseDepthFilter", depthEstimationRunner.IsEnabled && depthEstimationRunner.IsPrepared ? 1 : 0);
+        activeShader.SetInt("_DepthObjectCapacity", depthEstimationRunner.MaxObjects);
 
         // Set common buffers and parameters
-        Shader.SetBuffer(horizontalKernel, "outputArray", segmentationRunner.OutputBuffer);
-        Shader.SetBuffer(horizontalKernel, "objectDepths", depthEstimationRunner.ObjectDepthBuffer);
-        Shader.SetTexture(horizontalKernel, "InputTexture", Input);
-        Shader.SetTexture(horizontalKernel, "TempResult", temporaryRT);
+        activeShader.SetBuffer(horizontalKernel, "outputArray", segmentationRunner.OutputBuffer);
+        activeShader.SetBuffer(horizontalKernel, "objectDepths", depthEstimationRunner.ObjectDepthBuffer);
+        activeShader.SetTexture(horizontalKernel, "InputTexture", Input);
+        activeShader.SetTexture(horizontalKernel, "TempResult", temporaryRT);
 
         // Horizontal pass
-        Shader.Dispatch(horizontalKernel,
+        activeShader.Dispatch(horizontalKernel,
             Mathf.CeilToInt(segmentationRunner.ImageWidth / 8f),
             Mathf.CeilToInt(segmentationRunner.ImageHeight / 8f),
             1);
 
         // Set up vertical pass
-        Shader.SetBuffer(verticalKernel, "outputArray", segmentationRunner.OutputBuffer);
-        Shader.SetBuffer(verticalKernel, "objectDepths", depthEstimationRunner.ObjectDepthBuffer);
-        Shader.SetTexture(verticalKernel, "InputTexture", Input);
-        Shader.SetTexture(verticalKernel, "TempResult", temporaryRT);
-        Shader.SetTexture(verticalKernel, "Result", output);
+        activeShader.SetBuffer(verticalKernel, "outputArray", segmentationRunner.OutputBuffer);
+        activeShader.SetBuffer(verticalKernel, "objectDepths", depthEstimationRunner.ObjectDepthBuffer);
+        activeShader.SetTexture(verticalKernel, "InputTexture", Input);
+        activeShader.SetTexture(verticalKernel, "TempResult", temporaryRT);
+        activeShader.SetTexture(verticalKernel, "Result", output);
 
         // Vertical pass
-        Shader.Dispatch(verticalKernel,
+        activeShader.Dispatch(verticalKernel,
             Mathf.CeilToInt(segmentationRunner.ImageWidth / 8f),
             Mathf.CeilToInt(segmentationRunner.ImageHeight / 8f),
             1);
 
         // Final combine pass
-        Shader.SetTexture(combineKernel, "Result", output);
-        Shader.Dispatch(combineKernel,
+        activeShader.SetTexture(combineKernel, "Result", output);
+        activeShader.Dispatch(combineKernel,
             Mathf.CeilToInt(segmentationRunner.ImageWidth / 8f),
             Mathf.CeilToInt(segmentationRunner.ImageHeight / 8f),
             1);
     }
 
-    void OnDestroy()
+    protected override void OnDestroy()
     {
-        if (classSettingsBuffer != null)
-        {
-            classSettingsBuffer.Release();
-            classSettingsBuffer = null;
-        }
         if (temporaryRT != null)
         {
             temporaryRT.Release();
             Destroy(temporaryRT);
             temporaryRT = null;
         }
+        base.OnDestroy();
     }
 }

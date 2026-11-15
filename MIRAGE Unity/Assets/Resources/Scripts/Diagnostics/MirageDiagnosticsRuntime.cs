@@ -9,6 +9,12 @@ namespace Mirage.Diagnostics
     public sealed class MirageDiagnosticsRuntime : MonoBehaviour
     {
         private static MirageDiagnosticsRuntime active;
+
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        private static void ResetStaticState()
+        {
+            active = null;
+        }
         private bool ownsSession;
         private double nextSample, nextManifest;
         private double previousSample, sourceChangedAt, publicationChangedAt;
@@ -45,7 +51,7 @@ namespace Mirage.Diagnostics
         private void Sample(double now)
         {
             if (pipeline == null) pipeline = FindAnyObjectByType<Pipeline>();
-            CameraInput source = CameraInput.Instance;
+            CameraInput source = pipeline != null && pipeline.ActiveSourceInput != null ? pipeline.ActiveSourceInput : CameraInput.Instance;
             long frame = source != null ? source.FrameId : -1;
             long count = pipeline != null ? pipeline.PublishedFrameCount : 0;
             if (frame != previousSourceFrame) sourceChangedAt = now;
@@ -57,7 +63,7 @@ namespace Mirage.Diagnostics
             double processingTimeout = qualityMode ? Math.Max(30, ((MoebiusRunner)pipeline.ActiveInpaintingModel).RequestTimeoutSeconds + 5) : 10;
             var snapshot = new MirageHealthSnapshot
             {
-                SourceType = source == null ? "none" : source.UseDebugVideoInput ? "video" : "camera",
+                SourceType = source == null ? "none" : source.UseExternalTextureInput ? "external" : source.UseDebugVideoInput ? "video" : "camera",
                 SourceState = source == null ? "No input configured" : !input ? "Waiting for input"
                     : videoPaused ? "Video paused or stopped" : "Receiving input",
                 HasInput = input,
@@ -93,7 +99,8 @@ namespace Mirage.Diagnostics
         private static void CaptureManifest()
         {
             var runners = FindObjectsByType<ModelRunner>(FindObjectsInactive.Include, FindObjectsSortMode.None);
-            CameraInput source = CameraInput.Instance;
+            var activePipeline = FindAnyObjectByType<Pipeline>();
+            CameraInput source = activePipeline != null && activePipeline.ActiveSourceInput != null ? activePipeline.ActiveSourceInput : CameraInput.Instance;
             var manifest = new
             {
                 schemaVersion = SessionLogWriter.SchemaVersion,
@@ -103,7 +110,7 @@ namespace Mirage.Diagnostics
                 hardware = new { gpu = SystemInfo.graphicsDeviceName, graphicsApi = SystemInfo.graphicsDeviceType.ToString(), gpuMemoryMb = SystemInfo.graphicsMemorySize,
                     cpu = SystemInfo.processorType, cpuCount = SystemInfo.processorCount, systemMemoryMb = SystemInfo.systemMemorySize },
                 colorSpace = QualitySettings.activeColorSpace.ToString(),
-                input = new { type = source == null ? "none" : source.UseDebugVideoInput ? "video" : "camera",
+                input = new { type = source == null ? "none" : source.UseExternalTextureInput ? "external" : source.UseDebugVideoInput ? "video" : "camera",
                     width = source != null && source.CurrentFrame != null ? source.CurrentFrame.width : 0,
                     height = source != null && source.CurrentFrame != null ? source.CurrentFrame.height : 0 },
                 models = runners.Select(r => new

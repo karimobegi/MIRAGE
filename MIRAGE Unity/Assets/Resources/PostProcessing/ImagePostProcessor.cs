@@ -26,9 +26,10 @@ public class ImagePostProcessor : PostProcessor, IEffectHandler
     
     public override void Initialize(SegmentationRunner r, DepthEstimationRunner d, RenderTexture Output) {
         base.Initialize(r, d, Output);
-        Shader.SetInt("inputWidth", segmentationRunner.ImageWidth);
-        Shader.SetInt("inputHeight", segmentationRunner.ImageHeight);
-
+        var activeShader = ActiveShader;
+        if (activeShader == null) return;
+        activeShader.SetInt("inputWidth", segmentationRunner.ImageWidth);
+        activeShader.SetInt("inputHeight", segmentationRunner.ImageHeight);
     }
 
     /// <summary>
@@ -36,22 +37,16 @@ public class ImagePostProcessor : PostProcessor, IEffectHandler
     /// </summary>
     /// <param name="Input">The current input frame</param>
     public virtual void ExecuteShader(RenderTexture Input) {
-        
        if(!IsRunning) return;
        if (depthEstimationRunner.ObjectDepthBuffer == null) return;
-       Shader.SetInt("_UseDepthFilter", depthEstimationRunner.IsEnabled && depthEstimationRunner.IsPrepared ? 1 : 0);
-       Shader.SetInt("_DepthObjectCapacity", depthEstimationRunner.MaxObjects);
-       Shader.SetBuffer(kernelHandle, "outputArray", segmentationRunner.OutputBuffer);
-       Shader.SetTexture(kernelHandle, "InputTexture", Input);
-       Shader.SetBuffer(kernelHandle, "objectDepths", depthEstimationRunner.ObjectDepthBuffer);   
-       Shader.Dispatch(kernelHandle, Mathf.CeilToInt(segmentationRunner.ImageWidth / 8f), Mathf.CeilToInt(segmentationRunner.ImageHeight / 8f), 1);
-    }
-
-    private void OnDestroy() {
-        if (classSettingsBuffer != null) {
-            classSettingsBuffer.Release();
-            classSettingsBuffer = null;
-        }
+       var activeShader = ActiveShader;
+       if (activeShader == null) return;
+       activeShader.SetInt("_UseDepthFilter", depthEstimationRunner.IsEnabled && depthEstimationRunner.IsPrepared ? 1 : 0);
+       activeShader.SetInt("_DepthObjectCapacity", depthEstimationRunner.MaxObjects);
+       activeShader.SetBuffer(kernelHandle, "outputArray", segmentationRunner.OutputBuffer);
+       activeShader.SetTexture(kernelHandle, "InputTexture", Input);
+       activeShader.SetBuffer(kernelHandle, "objectDepths", depthEstimationRunner.ObjectDepthBuffer);   
+       activeShader.Dispatch(kernelHandle, Mathf.CeilToInt(segmentationRunner.ImageWidth / 8f), Mathf.CeilToInt(segmentationRunner.ImageHeight / 8f), 1);
     }
 
 }

@@ -5,10 +5,18 @@ using UnityEngine;
 using UnityEngine.UI;
 using UnityEngine.Video;
 
-/// <summary>Camera/video input with frame arrival timestamps and discontinuity IDs.</summary>
+/// <summary>Camera, recording, or external RenderTexture/Camera input with frame timestamps and discontinuity IDs.</summary>
 public class CameraInput : MonoBehaviour
 {
     public static CameraInput Instance;
+
+    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+    private static void ResetStaticState()
+    {
+        Instance = null;
+    }
+
+    public bool RegisterAsGlobalInstance = true;
     public int RequestedWidth = 1280;
     public int RequestedHeight = 720;
     public int FPS = 30;
@@ -17,6 +25,10 @@ public class CameraInput : MonoBehaviour
     private WebCamTexture webcamTexture;
     public bool UseDebugVideoInput;
     public VideoPlayer VideoPlayer;
+    public bool UseExternalTextureInput;
+    public Texture ExternalSourceTexture;
+    public Camera ExternalSourceCamera;
+    public bool AutoPollExternalTexture = true;
     public RawImage VideoPanel;
     public RenderTexture CurrentFrame;
 
@@ -27,17 +39,75 @@ public class CameraInput : MonoBehaviour
     public string LastInputError { get; private set; }
     public string SelectedCameraDeviceName => selectedCameraDeviceName;
     private long previousVideoFrame = -1;
+    private Texture lastExternalSource;
+    private bool ownsExternalCameraTarget;
 
     private void Awake()
     {
-        Instance = this;
-        if (UseDebugVideoInput) StartVideo();
+        if (RegisterAsGlobalInstance) Instance = this;
+        if (UseExternalTextureInput) StartExternalTexture(ExternalSourceTexture);
+        else if (UseDebugVideoInput) StartVideo();
         else if (startOnAwake) StartCamera();
+    }
+
+    public void StartExternalTexture(Texture externalTexture = null)
+    {
+        StopCamera();
+        DetachVideo();
+        if (VideoPlayer != null) VideoPlayer.Stop();
+        DetachExternalCameraTarget();
+        ReleaseFrame();
+        if (externalTexture != null) ExternalSourceTexture = externalTexture;
+        UseDebugVideoInput = false;
+        UseExternalTextureInput = true;
+        lastExternalSource = null;
+        NotifySourceDiscontinuity();
+        if (ExternalSourceTexture == null && ExternalSourceCamera != null && ExternalSourceCamera.targetTexture == null)
+        {
+            AllocateFrame(Mathf.Max(1, RequestedWidth), Mathf.Max(1, RequestedHeight));
+            ExternalSourceCamera.targetTexture = CurrentFrame;
+            ownsExternalCameraTarget = true;
+            if (VideoPanel != null) VideoPanel.texture = CurrentFrame;
+        }
+        LastInputError = null;
+        MirageDiagnostics.Record("input.external.started", "External texture input started.");
+    }
+
+    /// <summary>Publish a rendered CAVE camera or external texture frame into the MIRAGE pipeline.</summary>
+    public void SubmitExternalFrame(Texture externalTexture = null)
+    {
+        if (externalTexture != null) ExternalSourceTexture = externalTexture;
+        if (!UseExternalTextureInput) StartExternalTexture(ExternalSourceTexture);
+        Texture source = ExternalSourceTexture != null ? ExternalSourceTexture
+            : ExternalSourceCamera != null ? ExternalSourceCamera.targetTexture : null;
+        if (source == null || source.width <= 0 || source.height <= 0) return;
+
+        bool sourceChanged = !ReferenceEquals(source, lastExternalSource);
+        bool sizeChanged = CurrentFrame == null || CurrentFrame.width != source.width || CurrentFrame.height != source.height;
+        if (sizeChanged && !ReferenceEquals(source, CurrentFrame))
+        {
+            ReleaseFrame();
+            AllocateFrame(source.width, source.height);
+            if (VideoPanel != null) VideoPanel.texture = CurrentFrame;
+        }
+        if (sourceChanged || sizeChanged)
+        {
+            lastExternalSource = source;
+            NotifySourceDiscontinuity();
+        }
+        if (!ReferenceEquals(source, CurrentFrame))
+        {
+            Graphics.Blit(source, CurrentFrame);
+        }
+        MarkFrame();
     }
 
     public void StartVideo()
     {
         StopCamera();
+        DetachExternalCameraTarget();
+        UseExternalTextureInput = false;
+        lastExternalSource = null;
         DetachVideo();
         if (VideoPlayer == null)
         {
@@ -65,6 +135,9 @@ public class CameraInput : MonoBehaviour
     public void StartCamera()
     {
         if (webcamTexture != null && webcamTexture.isPlaying) return;
+        DetachExternalCameraTarget();
+        UseExternalTextureInput = false;
+        lastExternalSource = null;
         DetachVideo();
         if (VideoPlayer != null) VideoPlayer.Stop();
         if (webcamTexture != null) Destroy(webcamTexture);
@@ -152,7 +225,11 @@ public class CameraInput : MonoBehaviour
     public void StopInput()
     {
         StopCamera();
+        DetachExternalCameraTarget();
+        UseExternalTextureInput = false;
+        lastExternalSource = null;
         if (VideoPlayer != null) VideoPlayer.Stop();
+        ReleaseFrame();
         NotifySourceDiscontinuity();
         LastInputError = null;
         MirageDiagnostics.Record("input.stopped", "Input was stopped.");
@@ -215,6 +292,11 @@ public class CameraInput : MonoBehaviour
 
     private void Update()
     {
+        if (UseExternalTextureInput)
+        {
+            if (AutoPollExternalTexture) SubmitExternalFrame();
+            return;
+        }
         if (webcamTexture == null || !webcamTexture.isPlaying || !webcamTexture.didUpdateThisFrame ||
             webcamTexture.width <= 16 || webcamTexture.height <= 16) return;
         if (CurrentFrame == null || CurrentFrame.width != webcamTexture.width || CurrentFrame.height != webcamTexture.height)
@@ -226,6 +308,13 @@ public class CameraInput : MonoBehaviour
         }
         Graphics.Blit(webcamTexture, CurrentFrame);
         MarkFrame();
+    }
+
+    private void DetachExternalCameraTarget()
+    {
+        if (ownsExternalCameraTarget && ExternalSourceCamera != null && ExternalSourceCamera.targetTexture == CurrentFrame)
+            ExternalSourceCamera.targetTexture = null;
+        ownsExternalCameraTarget = false;
     }
 
     private void MarkFrame()
@@ -261,6 +350,7 @@ public class CameraInput : MonoBehaviour
 
     private void OnDestroy()
     {
+        DetachExternalCameraTarget();
         DetachVideo();
         if (webcamTexture != null)
         {

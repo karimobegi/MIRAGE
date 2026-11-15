@@ -24,7 +24,8 @@ public static class MirageUsabilityChecks
             StudySettings(root);
             ModalHelp();
             DialogLayout();
-            return "PASS: actual source input controls, selection failure preserves the active source, actionable setup messages, diagnostics callbacks/health, and Windows dialog layout.";
+            Unity66And67Readiness();
+            return "PASS: actual source input controls, selection failure preserves the active source, actionable setup messages, Unity 6.6/6.7 + CAVE external-input readiness, diagnostics callbacks/health, and Windows dialog layout.";
         }
         finally {MirageDiagnostics.Shutdown();}
     }
@@ -142,5 +143,35 @@ public static class MirageUsabilityChecks
         Check(!newSceneModule.enabled,"A scene's new input module bypassed modal help");
         MirageRuntimeChecks.Invoke(panel,typeof(MirageOperatorPanel),"OnDisable");
         Check(!MirageOperatorPanel.IsVisible && module.enabled && newSceneModule.enabled,"Closing help did not restore input");
+    }
+
+    private static void Unity66And67Readiness()
+    {
+        TestScheduler.Reset();
+        string sampleManifest="{\"dependencies\":{\"com.unity.ai.inference\":\"2.6.1\"},\"scopedRegistries\":[{\"name\":\"package.openupm.com\"}]}";
+        string report66=MirageDesktopPreparation.EvaluateUnity6Readiness("6000.6.0f1",sampleManifest,true);
+        string report67=MirageDesktopPreparation.EvaluateUnity6Readiness("6000.7.0f1",sampleManifest,true);
+        Check(report66.Contains("Unity 6.6") && report66.Contains("2.6+") && !report66.Contains("Needs attention"),
+            "Unity 6.6 readiness check failed: "+report66);
+        Check(report67.Contains("Unity 6.7") && report67.Contains("CoreCLR") && !report67.Contains("Needs attention"),
+            "Unity 6.7 readiness check failed: "+report67);
+
+        var pipeline=new Pipeline();
+        var yolo=new YOLOSegmentationRunner{InputWidth=640,InputHeight=640,ImageWidth=1280,ImageHeight=720,OutputWidth=640,OutputHeight=360,ModelAsset=new Unity.InferenceEngine.ModelAsset()};
+        var depth=new DepthAnythingRunner{InputWidth=504,InputHeight=504,ImageWidth=1280,ImageHeight=720,OutputWidth=640,OutputHeight=360,IsEnabled=false};
+        var externalInput=new CameraInput{startOnAwake=false,UseExternalTextureInput=true};
+        pipeline.SetSourceInput(externalInput);
+        Check(MirageSetupReport.Check(false).Any(i=>i.Code=="EXTERNAL_SOURCE_MISSING" && i.Blocking),
+            "External texture mode without texture/camera did not report EXTERNAL_SOURCE_MISSING");
+        externalInput.SubmitExternalFrame(new RenderTexture(1280,720,0){Stamp=5});
+        var cleared=MirageSetupReport.Check(false);
+        Check(!cleared.Any(i=>i.Code=="EXTERNAL_SOURCE_MISSING") && !cleared.Any(i=>i.Code=="VIDEO_PLAYER_MISSING"),
+            "Configured external CAVE texture falsely reported missing external source or video player");
+
+        var runtime=new MirageDiagnosticsRuntime();
+        MirageRuntimeChecks.Invoke(runtime,typeof(MirageDiagnosticsRuntime),"Awake");
+        MirageRuntimeChecks.Invoke(runtime,typeof(MirageDiagnosticsRuntime),"Sample",2.0);
+        Check(MirageDiagnostics.GetHealthSnapshot().SourceType=="external",
+            "Diagnostics health did not report external CAVE texture source type");
     }
 }

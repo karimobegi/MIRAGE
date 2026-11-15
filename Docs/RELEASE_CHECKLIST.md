@@ -6,7 +6,7 @@ This is a maintainer checklist for a Windows desktop release. It is not a claim 
 
 - Choose the supported Windows version, GPU/driver configuration, display resolution, input devices, and whether the release uses a fixed demonstration video or a camera.
 - Choose one initial scene and a documented starting configuration. Use the Desktop UI workflow for a first operator release.
-- Record the application version, Git commit, Unity version, package versions, model filenames/checksums, model input dimensions, and enabled backend.
+- Record the application version, Git commit, Unity version (`6000.2.2f1` through Unity 6.6 `6000.6.x` / Unity 6.7 `6000.7.x`), package versions (`com.unity.ai.inference` `2.6.1`), model filenames/checksums, model input dimensions, and enabled backend. Run **MIRAGE > Prepare desktop > 4. Check Unity 6.6 and 6.7 readiness** when upgrading Unity streams.
 - Include the [operator guide](OPERATOR_GUIDE.md), a short first-run task, and a support contact.
 
 ## Prepare the model and media pack

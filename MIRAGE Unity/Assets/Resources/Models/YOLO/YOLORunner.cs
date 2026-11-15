@@ -8,39 +8,48 @@ using UnityEngine.Rendering;
 using UnityEngine.UI;
 
 
+public enum YoloOutputFormat
+{
+    Auto = 0,
+    DenseAnchors = 1,
+    EndToEnd = 2
+}
+
 /// <summary>
 /// YOLO Segmentation: Model downloaded from https://docs.ultralytics.com/tasks/segment/#models
+/// Supports both Ultralytics YOLO27 and YOLO26 (as well as YOLO11/YOLOv8) ONNX segmentation exports:
 /// 
-/// See the Export section for instructions on how to export the model to onnx
-/// When using the default seg model, these are the tensor dimensions. Using a custom model, these may vary, however the general principles
-/// are still applicable
-/// 
-/// YOLO configurations:
-/// Input shape: (1, 3, 640, 640) BCHW 
-/// Output shape(s): (1, 32, 160, 160)), 1 is batch size, 32 is number of prototype masks with each mask being 160x160
-///                 ((1, 116, 8400), where 1 is the batch size, 116 = 4bbox coordinates + 80 classes + 32 mask coefficients
-///                 NOTE: When using a custom trained YOLO models, it is 4 bbox + N CLASSES (as defined in training) + 32 mask coefficients
+/// 1. End-to-End / NMS-free exports (default `end2end=True` in YOLO26/YOLO27, and native query-based
+///    Transformer heads in YOLO27m-seg / YOLO27l-seg):
+///    - Input shape: (1, 3, H, W) BCHW (e.g., 640x640 or 800x800)
+///    - Output 0: (1, MaxDet, 6 + NumProtos), e.g. (1, 300, 38) -> [x1, y1, x2, y2, score, class_id, 32 mask coefs]
+///    - Output 1: (1, NumProtos, H/4, W/4), e.g. (1, 32, 160, 160) or (1, 32, 200, 200)
 ///
-/// We've added some additional pre- and postprocessing steps to improve quality and make it easier to use within our pipeline
-/// 1. Preprocessing: Based on the input image's aspect ratio, we downscale the input image to fit within
-/// the input tensor dimensions while preserving the aspect ratio. See <see cref="ModelRunner.CalculateScaleAndPadding()"/>
-/// 2. The input is fed through the model
-/// 3. Output processing: We apply tensor postprocessing to get the actual masks, bounding boxes, labels and scores as described in the YOLO paper
-/// 4. Since the mask is 1/4th of the size of the input, we upscale the mask to the Output dimensions.
-/// 5. Depending on whether the aspect ratio matches the input image aspect ratio or the model input aspect ratio, we either clip the padding or not
-/// 6. This allows us to either continue calculating with the padded square output or with the image in its original aspect ratio
-/// Author: J-Britten
-/// 
+/// 2. Dense one-to-many anchor exports (`end2end=False`, e.g., YOLO26s-seg or YOLO27n/s-seg dense):
+///    - Output 0: (1, 4 + YOLOClasses + NumProtos, NumAnchors), e.g. (1, 116, 8400) -> [cx, cy, w, h, classes..., coefs...]
+///    - Output 1: (1, NumProtos, H/4, W/4)
+///
+/// Author: J-Britten (updated for YOLO27 / NMS-free End-to-End ONNX compatibility)
 /// </summary>
 public class YOLOSegmentationRunner : SegmentationRunner
 {
 #region Variables
     
     /// <summary>
-    /// By which factor YOLO downscales the mask output. Default: 4
+    /// By which factor YOLO downscales the mask output when static prototype dimensions are unavailable. Default: 4
     /// </summary>
     [HideInInspector]
     public int MaskScalingFactor = 4;
+
+    [Tooltip("Auto-detects Dense (end2end=False, e.g. 1x116x8400) vs End-to-End NMS-free (end2end=True / YOLO27m/l-seg, e.g. 1x300x38) ONNX outputs.")]
+    public YoloOutputFormat OutputFormat = YoloOutputFormat.Auto;
+
+    [Min(1)]
+    [Tooltip("Number of prototype mask channels in output1 (32 for standard Ultralytics YOLO26/YOLO27 segmentation models).")]
+    public int MaskPrototypeCount = 32;
+
+    [HideInInspector]
+    public YoloOutputFormat ActiveOutputFormat { get; private set; } = YoloOutputFormat.DenseAnchors;
     
     [Tooltip("Enabled if the Output shape should be clipped to match the original Image input ratio. " +
              "If disabled, the output will be a square image with padding. The original aspect ratio will be preserved.")]
@@ -201,116 +210,290 @@ public class YOLOSegmentationRunner : SegmentationRunner
     protected override void PrepareModel()
     {
         CalculateScaleAndPadding();
-        //int[] padding = new int[] {pad_w_half, pad_w - pad_w_half, pad_h - pad_h_half, pad_h_half};
-        int[] padding = new int[] {0, pad_w, 0, pad_h};
+        int[] padding = new int[] { 0, pad_w, 0, pad_h };
 
         inputTextureTransform = new TextureTransform()
-        //.SetDimensions(InputWidth, InputHeight,3)
-        .SetDimensions(scaledWidth, scaledHeight,3)
-        .SetChannelSwizzle(ChannelSwizzle.RGBA)
-        .SetTensorLayout(TensorLayout.NCHW);
+            .SetDimensions(scaledWidth, scaledHeight, 3)
+            .SetChannelSwizzle(ChannelSwizzle.RGBA)
+            .SetTensorLayout(TensorLayout.NCHW);
         inputTensor = new Tensor<float>(new TensorShape(1, 3, scaledHeight, scaledWidth));
-        var internalMaskWidth = InputWidth / MaskScalingFactor;
-        var internalMaskHeight = InputHeight / MaskScalingFactor;
-        var pad_h_scaled = Mathf.RoundToInt(pad_h / MaskScalingFactor);
-        var pad_w_scaled = Mathf.RoundToInt(pad_w / MaskScalingFactor);
 
-        var ctoC = Functional.Constant(new TensorShape(4,4),new float[] //center to corners matrix
+        var model = ModelLoader.Load(ModelAsset);
+        string assetName = ModelAsset != null ? ModelAsset.name : null;
+
+        // Probe symbolic output metadata once so Auto mode can distinguish Dense (1, 116, 8400)
+        // from End-to-End / YOLO27 NMS-free (1, 300, 38) and read prototype mask dimensions (e.g. 160x160 or 200x200).
+        var probeGraph = new FunctionalGraph();
+        var probeInput = probeGraph.AddInput(
+            DataType.Float,
+            scaledHeight > 0 && scaledWidth > 0
+                ? new DynamicTensorShape(1, 3, scaledHeight, scaledWidth)
+                : new DynamicTensorShape(1, 3, -1, -1));
+        probeInput = Functional.Pad(probeInput, padding, paddingValue);
+        var probeOutputs = Functional.Forward(model, probeInput);
+        string boxesDesc = probeOutputs != null && probeOutputs.Length > 0 && probeOutputs[0] != null ? probeOutputs[0].ToString() : null;
+        string protosDesc = probeOutputs != null && probeOutputs.Length > 1 && probeOutputs[1] != null ? probeOutputs[1].ToString() : null;
+
+        ResolveOutputLayout(
+            boxesDesc,
+            protosDesc,
+            assetName,
+            YOLOClasses,
+            MaskPrototypeCount,
+            OutputFormat,
+            out YoloOutputFormat resolvedFormat,
+            out bool transposeEndToEnd,
+            out int protoCount,
+            out int protoHeight,
+            out int protoWidth);
+
+        try
         {
-                    1,      0,      1,      0,
-                    0,      1,      0,      1,
-                    -0.5f,  0,      0.5f,   0,
-                    0,      -0.5f,  0,      0.5f
-        });
-
-        var model = ModelLoader.Load(ModelAsset); //Load YOLO model
-        var graph = new FunctionalGraph();
-        //var input = graph.AddInput(model, 0); //get input tensor from original model
-        var input = graph.AddInput(DataType.Float, new DynamicTensorShape(1,3,-1,-1));
-
-        input = Functional.Pad(input, padding, paddingValue); //At this point, the input tensor is padded to match the input dimensions of the model
-
-        //no preprocessing needed
-        var outputs = Functional.Forward(model, input);
-
-        var boxes_scores = outputs[0]; //shape (1, 116, 8400) by default, the number is changing depending on the number of classes the yolo model has
-
-        var classUpper = 4 + YOLOClasses; //upper bounds for tensor creation below, by default YOLO has 80 classes, so it would be 84
-        var boxCoords = boxes_scores[0, 0..4, ..];  //The first 4 elements are the box coordinates, shape (4, 8400)
-        boxCoords = Functional.Transpose(boxCoords, 0,1); //Transpose to shape (8400, 4)
-        var allScores = boxes_scores[0, 4..classUpper, ..]; //The next 80 elements are the class scores, shape ( 80, 8400)
-        var scores = Functional.ReduceMax(allScores, 0); //Reduce to shape (8400)
-        var classIDs = Functional.ArgMax(allScores, 0); //Reduce to shape (8400)
-
-        var boxCorners = Functional.MatMul(boxCoords, ctoC); //Transform the box coordinates to corners
-        
-        var indices = Functional.NMS(boxCorners, scores, iouThreshold, scoreThreshold); //iou threshold, score threshold //shape = N (the amount of objects that meet the threshold criteria)
-        var indices_unsqueezed = Functional.Unsqueeze(indices, -1); // N
-        var indices_2 = Functional.BroadcastTo(indices_unsqueezed, new int[] {4}); // N, 4
-        var coords = Functional.Gather(boxCoords, 0, indices_2); //N, 4
-
-        var labelIDs = Functional.Gather(classIDs, 0, indices); //N, ids for labels
-        var usedScores = Functional.Gather(scores, 0, indices); //N, all relevant scores
-
-        var mask_coefs = boxes_scores[0, classUpper.., ..]; //shape (1, 32, 8400)
-        mask_coefs = Functional.Transpose(mask_coefs, 0,1); //shape (8400, 32)
-
-        var indices_3 = Functional.BroadcastTo(indices_unsqueezed, new int[] {32}); // N, 32
-        mask_coefs = Functional.Gather(mask_coefs, 0, indices_3); //shape (N, 32)
-       // mask_coefs = Functional.Gather(mask_coefs, 1, indices); //shape (1, 32, N)
-
-        var maskPrototypes = outputs[1]; //shape (1, 32, 160, 160) //consider turning this into shape N, 32, 160, 160 then apply multiplication accordingly
-
-        var coefs = Functional.Reshape(mask_coefs, new int[] {-1, 32,1,1}); //reshape coefficients to match match prototype for multiplication, -1 = N
-        var masks = Functional.Mul(coefs, maskPrototypes); //for each result, multiply the coefficients with the prototype on their respective mask layer
-        
-        masks = Functional.ReduceSum(masks,1);    //shape (N, 160, 160)
-
-        //The following section takes care of upscaling the masks to the original image size
-        FunctionalTensor upscalingTensor = Functional.Constant(0.0f); //Create a tensor of zeros
-        upscalingTensor = Functional.BroadcastTo(upscalingTensor, new int[] {1,internalMaskHeight,internalMaskWidth}); //Give it the same shape as a mask
-        
-        //Concatenate the upscaling tensor with the masks
-        //we need to do this because sentis interpolation cant work/handle Length(dimX)==0 tensors. These can occur if yolo doesnt detect any object in a frame
-        //By concatenating a tensor of zeros, we can avoid this issue and ensure each dimenson is at least of length 1
-        upscalingTensor = Functional.Concat(new FunctionalTensor[] {upscalingTensor, masks}, 0); 
-
-        upscalingTensor = Functional.Reshape(upscalingTensor, new int[] {-1,1,internalMaskHeight,internalMaskWidth}); //Reshape concatenated to NCHW shape. Interpolating only works with this shape
-
-        if(ClipPadding) {
-            upscalingTensor = upscalingTensor[..,..,0..(internalMaskHeight-pad_h_scaled), 0..(internalMaskWidth-pad_w_scaled)]; //clip padding, must match the padding array specified above
+            runtimeModel = CompileSegmentationGraph(model, padding, resolvedFormat, transposeEndToEnd, protoCount, protoHeight, protoWidth);
+            ActiveOutputFormat = resolvedFormat;
+        }
+        catch (Exception primaryError) when (OutputFormat == YoloOutputFormat.Auto)
+        {
+            var fallbackFormat = resolvedFormat == YoloOutputFormat.EndToEnd
+                ? YoloOutputFormat.DenseAnchors
+                : YoloOutputFormat.EndToEnd;
+            Debug.LogWarning($"YOLO: Auto format '{resolvedFormat}' failed graph compilation ({primaryError.Message}); retrying '{fallbackFormat}'.", this);
+            runtimeModel = CompileSegmentationGraph(model, padding, fallbackFormat, false, protoCount, protoHeight, protoWidth);
+            ActiveOutputFormat = fallbackFormat;
         }
 
-        upscalingTensor = Functional.Interpolate(upscalingTensor, new int[] {OutputHeight,OutputWidth}, mode: "linear"); //upscale (linear is bilinear)
-        
-        
-        masks = upscalingTensor[1..]; //Remove the added zero tensor
-        //https://github.com/ultralytics/ultralytics/issues/17672
-        // Add sigmoid activation to normalize values between 0 and 1
-        masks = Functional.Sigmoid(masks);
-        
-        masks = Functional.Where( //remove noise from the mask
-            Functional.Greater(masks, Functional.Constant( maskThreshold )),
-            masks,
-            Functional.Constant(0.0f )
-        );
-
-
-       // var nullPointerCatcherTensor = Functional.Constant(-1.0f);
-       // nullPointerCatcherTensor = Functional.BroadcastTo(nullPointerCatcherTensor, new int[] {1,1, MaskHeight, MaskWidth});
-       // masks = Functional.Concat(new FunctionalTensor[] {masks, nullPointerCatcherTensor}, 0);
-//        masks = Functional.Reshape(masks, new int[] {-1, OutputHeight, OutputWidth, 1});
-
-
-
-        var newOutputs = new FunctionalTensor[] {labelIDs, usedScores, coords, masks};
-
-        runtimeModel = graph.Compile(newOutputs);
-
-        //runtimeModel = graph.Compile(boxes_scores);
         PreparePostProcessing();
     }
 
+    private Model CompileSegmentationGraph(
+        Model model,
+        int[] padding,
+        YoloOutputFormat format,
+        bool transposeEndToEnd,
+        int protoCount,
+        int protoHeight,
+        int protoWidth)
+    {
+        int scaleFactor = Mathf.Max(1, MaskScalingFactor);
+        int internalMaskWidth = protoWidth > 0 ? protoWidth : Mathf.Max(1, InputWidth / scaleFactor);
+        int internalMaskHeight = protoHeight > 0 ? protoHeight : Mathf.Max(1, InputHeight / scaleFactor);
+        int pad_h_scaled = InputHeight > 0 ? Mathf.RoundToInt((float)pad_h * internalMaskHeight / InputHeight) : 0;
+        int pad_w_scaled = InputWidth > 0 ? Mathf.RoundToInt((float)pad_w * internalMaskWidth / InputWidth) : 0;
+
+        var graph = new FunctionalGraph();
+        var input = graph.AddInput(
+            DataType.Float,
+            scaledHeight > 0 && scaledWidth > 0
+                ? new DynamicTensorShape(1, 3, scaledHeight, scaledWidth)
+                : new DynamicTensorShape(1, 3, -1, -1));
+
+        input = Functional.Pad(input, padding, paddingValue);
+        var outputs = Functional.Forward(model, input);
+        var boxes_scores = outputs[0];
+        var maskPrototypes = outputs[1];
+
+        FunctionalTensor coords;
+        FunctionalTensor labelIDs;
+        FunctionalTensor usedScores;
+        FunctionalTensor mask_coefs;
+
+        if (format == YoloOutputFormat.EndToEnd)
+        {
+            // End-to-End / NMS-free layout (YOLO27m-seg, YOLO27l-seg, or YOLO26/YOLO27 exported with end2end=True):
+            // outputs[0] is (1, MaxDet, 6 + protoCount), where columns are [x1, y1, x2, y2, score, class_id, mask_coefs...].
+            var cornersToCenter = Functional.Constant(new TensorShape(4, 4), new float[]
+            {
+                0.5f,  0f,   -1f,  0f,
+                0f,    0.5f,  0f, -1f,
+                0.5f,  0f,    1f,  0f,
+                0f,    0.5f,  0f,  1f
+            });
+
+            var detections = boxes_scores[0, .., ..];
+            if (transposeEndToEnd)
+                detections = Functional.Transpose(detections, 0, 1);
+
+            var boxCorners = detections[.., 0..4]; // (Q, 4) in [x1, y1, x2, y2]
+            var boxCoords = Functional.MatMul(boxCorners, cornersToCenter); // (Q, 4) in [cx, cy, w, h]
+            var scores = Functional.Reshape(detections[.., 4..5], new int[] { -1 }); // (Q)
+            var classIDs = Functional.Int(Functional.Reshape(detections[.., 5..6], new int[] { -1 }) + Functional.Constant(0.5f)); // (Q)
+
+            // One-to-one / embedded-NMS heads have already suppressed duplicate detections; iouThreshold = 1.0f
+            // preserves overlapping distinct instances while filtering out zero-padded / sub-threshold rows into dynamic N indices.
+            float effectiveScoreThreshold = Mathf.Max(scoreThreshold, 1e-5f);
+            var indices = Functional.NMS(boxCorners, scores, 1.0f, effectiveScoreThreshold);
+            var indicesUnsqueezed = Functional.Unsqueeze(indices, -1);
+
+            coords = Functional.Gather(boxCoords, 0, Functional.BroadcastTo(indicesUnsqueezed, new int[] { 4 }));
+            labelIDs = Functional.Gather(classIDs, 0, indices);
+            usedScores = Functional.Gather(scores, 0, indices);
+
+            int coefEnd = 6 + protoCount;
+            var rawCoefs = detections[.., 6..coefEnd];
+            mask_coefs = Functional.Gather(rawCoefs, 0, Functional.BroadcastTo(indicesUnsqueezed, new int[] { protoCount }));
+        }
+        else
+        {
+            // Dense anchor layout (end2end=False, e.g. (1, 116, 8400)): [cx, cy, w, h, classes..., mask_coefs...]
+            var centerToCorners = Functional.Constant(new TensorShape(4, 4), new float[]
+            {
+                 1f,    0f,    1f,   0f,
+                 0f,    1f,    0f,   1f,
+                -0.5f,  0f,    0.5f, 0f,
+                 0f,   -0.5f,  0f,   0.5f
+            });
+
+            int classUpper = 4 + Mathf.Max(1, YOLOClasses);
+            var boxCoords = Functional.Transpose(boxes_scores[0, 0..4, ..], 0, 1);
+            var allScores = boxes_scores[0, 4..classUpper, ..];
+            var scores = Functional.ReduceMax(allScores, 0);
+            var classIDs = Functional.ArgMax(allScores, 0);
+            var boxCorners = Functional.MatMul(boxCoords, centerToCorners);
+
+            var indices = Functional.NMS(boxCorners, scores, iouThreshold, scoreThreshold);
+            var indicesUnsqueezed = Functional.Unsqueeze(indices, -1);
+
+            coords = Functional.Gather(boxCoords, 0, Functional.BroadcastTo(indicesUnsqueezed, new int[] { 4 }));
+            labelIDs = Functional.Gather(classIDs, 0, indices);
+            usedScores = Functional.Gather(scores, 0, indices);
+
+            var rawCoefs = Functional.Transpose(boxes_scores[0, classUpper.., ..], 0, 1);
+            mask_coefs = Functional.Gather(rawCoefs, 0, Functional.BroadcastTo(indicesUnsqueezed, new int[] { protoCount }));
+        }
+
+        var coefs = Functional.Reshape(mask_coefs, new int[] { -1, protoCount, 1, 1 });
+        var masks = Functional.Mul(coefs, maskPrototypes);
+        masks = Functional.ReduceSum(masks, 1); // (N, internalMaskHeight, internalMaskWidth)
+
+        // Prepend one dummy mask before Interpolate so N == 0 frames never pass a zero-length batch dimension.
+        FunctionalTensor upscalingTensor = Functional.Constant(0.0f);
+        upscalingTensor = Functional.BroadcastTo(upscalingTensor, new int[] { 1, internalMaskHeight, internalMaskWidth });
+        upscalingTensor = Functional.Concat(new FunctionalTensor[] { upscalingTensor, masks }, 0);
+        upscalingTensor = Functional.Reshape(upscalingTensor, new int[] { -1, 1, internalMaskHeight, internalMaskWidth });
+
+        if (ClipPadding)
+        {
+            int clippedH = Mathf.Max(1, internalMaskHeight - pad_h_scaled);
+            int clippedW = Mathf.Max(1, internalMaskWidth - pad_w_scaled);
+            upscalingTensor = upscalingTensor[.., .., 0..clippedH, 0..clippedW];
+        }
+
+        upscalingTensor = Functional.Interpolate(upscalingTensor, new int[] { OutputHeight, OutputWidth }, mode: "linear");
+        masks = upscalingTensor[1..];
+        masks = Functional.Sigmoid(masks);
+        masks = Functional.Where(
+            Functional.Greater(masks, Functional.Constant(maskThreshold)),
+            masks,
+            Functional.Constant(0.0f));
+
+        return graph.Compile(new FunctionalTensor[] { labelIDs, usedScores, coords, masks });
+    }
+
+    public static void ResolveOutputLayout(
+        string boxesDescriptor,
+        string prototypesDescriptor,
+        string modelAssetName,
+        int configuredClasses,
+        int configuredPrototypes,
+        YoloOutputFormat requestedFormat,
+        out YoloOutputFormat resolvedFormat,
+        out bool transposeEndToEnd,
+        out int protoCount,
+        out int protoHeight,
+        out int protoWidth)
+    {
+        protoCount = Mathf.Max(1, configuredPrototypes);
+        protoHeight = 0;
+        protoWidth = 0;
+        transposeEndToEnd = false;
+
+        int[] protoDims = ParseShapeDimensions(prototypesDescriptor);
+        if (protoDims.Length >= 4)
+        {
+            if (protoDims[1] > 0) protoCount = protoDims[1];
+            if (protoDims[2] > 0 && protoDims[3] > 0)
+            {
+                protoHeight = protoDims[2];
+                protoWidth = protoDims[3];
+            }
+        }
+
+        int[] boxDims = ParseShapeDimensions(boxesDescriptor);
+        int expectedEndToEndCols = 6 + protoCount;
+        int expectedDenseChannels = 4 + Mathf.Max(1, configuredClasses) + protoCount;
+
+        if (requestedFormat == YoloOutputFormat.EndToEnd)
+        {
+            resolvedFormat = YoloOutputFormat.EndToEnd;
+            if (boxDims.Length >= 3)
+            {
+                transposeEndToEnd = boxDims[1] == expectedEndToEndCols && boxDims[2] != expectedEndToEndCols;
+                if (!transposeEndToEnd && protoDims.Length < 4 && boxDims[2] > 6 && boxDims[2] != expectedDenseChannels)
+                    protoCount = boxDims[2] - 6;
+            }
+            return;
+        }
+
+        if (requestedFormat == YoloOutputFormat.DenseAnchors)
+        {
+            resolvedFormat = YoloOutputFormat.DenseAnchors;
+            return;
+        }
+
+        if (boxDims.Length >= 3)
+        {
+            int d1 = boxDims[1];
+            int d2 = boxDims[2];
+            if (d2 == expectedEndToEndCols && d1 != expectedDenseChannels)
+            {
+                resolvedFormat = YoloOutputFormat.EndToEnd;
+                return;
+            }
+            if (d1 == expectedDenseChannels)
+            {
+                resolvedFormat = YoloOutputFormat.DenseAnchors;
+                return;
+            }
+            if (d1 == expectedEndToEndCols && d2 != expectedEndToEndCols)
+            {
+                resolvedFormat = YoloOutputFormat.EndToEnd;
+                transposeEndToEnd = true;
+                return;
+            }
+        }
+
+        if (!string.IsNullOrEmpty(modelAssetName))
+        {
+            string lower = modelAssetName.ToLowerInvariant();
+            if (lower.Contains("e2e") || lower.Contains("end2end") || lower.Contains("nmsfree") ||
+                lower.Contains("yolo27m") || lower.Contains("yolo27l"))
+            {
+                resolvedFormat = YoloOutputFormat.EndToEnd;
+                return;
+            }
+        }
+
+        resolvedFormat = YoloOutputFormat.DenseAnchors;
+    }
+
+    private static int[] ParseShapeDimensions(string descriptor)
+    {
+        if (string.IsNullOrWhiteSpace(descriptor)) return Array.Empty<int>();
+        int close = descriptor.LastIndexOf(')');
+        if (close <= 0) return Array.Empty<int>();
+        int open = descriptor.LastIndexOf('(', close);
+        if (open < 0 || close <= open + 1) return Array.Empty<int>();
+
+        string[] parts = descriptor.Substring(open + 1, close - open - 1).Split(',');
+        if (parts.Length < 2) return Array.Empty<int>();
+        var dims = new int[parts.Length];
+        for (int i = 0; i < parts.Length; i++)
+        {
+            string token = parts[i].Trim();
+            dims[i] = int.TryParse(token, out int value) ? value : -1;
+        }
+        return dims;
+    }
 
 #endregion
 

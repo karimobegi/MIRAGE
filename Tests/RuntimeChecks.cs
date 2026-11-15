@@ -39,7 +39,11 @@ public static class MirageRuntimeChecks
         SameIdCameraReplacementIsProcessed();
         SettingsChangesRefreshPausedInput();
         SettingsChangesDiscardInflightResults();
-        return "PASS: actual-source disabled-backend/lazy initialization, scheduler budgets/finally, depth validity+units+borrowed ownership, CPU class/detection selection, camera restart/discontinuity/timestamps, sequential+parallel frame coherence/double buffering, and source-switch invalidation.";
+        ExternalTextureAndCameraLifecycle();
+        DualViewpointAndShaderIsolation();
+        FastEnterPlayModeStaticReset();
+        Yolo27AndEndToEndSupport();
+        return "PASS: actual-source disabled-backend/lazy initialization, scheduler budgets/finally, depth validity+units+borrowed ownership, CPU class/detection selection, camera/external-texture lifecycle, sequential+parallel coherence, dual-viewpoint/shader isolation, Fast Enter Play Mode resets, and YOLO27/EndToEnd ONNX graph support.";
     }
 
     private static void DisabledRunnerInitialization()
@@ -299,6 +303,214 @@ public static class MirageRuntimeChecks
         Until(()=>f.Pipeline.PublishedFrameCount==1);
         Check(f.Segmentation.Calls==2,"Settings changed in flight without discarding and reprocessing the old result");
         Check(f.Pipeline.OutputImage.texture.Stamp==f.Camera.FrameId,"Preset refresh published an unrelated snapshot");
+    }
+
+    private static void ExternalTextureAndCameraLifecycle()
+    {
+        TestScheduler.Reset();
+        var primary=new CameraInput { startOnAwake=false };
+        Invoke(primary,typeof(CameraInput),"Awake");
+        Check(ReferenceEquals(CameraInput.Instance,primary),"Primary CameraInput did not register as global instance");
+
+        var external=new CameraInput { startOnAwake=false, RegisterAsGlobalInstance=false, AutoPollExternalTexture=false };
+        Invoke(external,typeof(CameraInput),"Awake");
+        Check(ReferenceEquals(CameraInput.Instance,primary),"Secondary non-global CameraInput overwrote CameraInput.Instance");
+
+        var caveTex1=new RenderTexture(64,36,0) { Stamp=77 };
+        external.SubmitExternalFrame(caveTex1);
+        Check(external.UseExternalTextureInput && external.HasFrame && external.CurrentFrame.Stamp==77 && external.FrameId==1,"External texture frame was not published");
+
+        long prevVersion=external.SourceVersion;
+        caveTex1.Stamp=78;
+        external.SubmitExternalFrame();
+        Check(external.SourceVersion==prevVersion && external.CurrentFrame.Stamp==78 && external.FrameId==2,"Subsequent external frame caused spurious discontinuity");
+
+        var caveTex2=new RenderTexture(128,72,0) { Stamp=99 };
+        external.SubmitExternalFrame(caveTex2);
+        Check(external.SourceVersion>prevVersion && external.CurrentFrame.width==128 && external.CurrentFrame.Stamp==99,"Replacing/resizing external texture did not trigger discontinuity and reallocate");
+
+        var virtualCam=new Camera();
+        var camFeed=new CameraInput { startOnAwake=false, RegisterAsGlobalInstance=false, UseExternalTextureInput=true, ExternalSourceCamera=virtualCam, RequestedWidth=80, RequestedHeight=45 };
+        Invoke(camFeed,typeof(CameraInput),"Awake");
+        Check(virtualCam.targetTexture!=null && virtualCam.targetTexture==camFeed.CurrentFrame,"ExternalSourceCamera without targetTexture was not bound automatically");
+        virtualCam.targetTexture.Stamp=123;
+        Invoke(camFeed,typeof(CameraInput),"Update");
+        Check(camFeed.HasFrame && camFeed.CurrentFrame.Stamp==123,"ExternalSourceCamera frame was not polled on Update");
+        Invoke(camFeed,typeof(CameraInput),"OnDestroy");
+        Check(virtualCam.targetTexture==null,"Destroying CameraInput left dangling targetTexture on ExternalSourceCamera");
+    }
+
+    private static void DualViewpointAndShaderIsolation()
+    {
+        TestScheduler.Reset();
+        var seg=new SegmentationProbe();Prepare(seg);
+        var depth=new DepthProbe { Segmentation=seg };Prepare(depth);
+
+        // 1. Verify two PostProcessors sharing one ComputeShader asset get isolated runtime shader instances.
+        var sharedAsset=new ComputeShader { name="SharedOutlineAsset" };
+        var driverRoot=new GameObject("DriverEffects").transform;
+        var passengerRoot=new GameObject("PassengerEffects").transform;
+
+        var driverProc=new PostProcessor { Shader=sharedAsset, ClassSettings=new[]{new PostProcessorSetting(7,Color.white,0,50)} };
+        driverProc.transform.SetParent(driverRoot);
+        var passengerProc=new PostProcessor { Shader=sharedAsset, ClassSettings=new[]{new PostProcessorSetting(7,Color.black,0,50)} };
+        passengerProc.transform.SetParent(passengerRoot);
+
+        var cam=new CameraInput { startOnAwake=false, AutoPollExternalTexture=false };
+        Invoke(cam,typeof(CameraInput),"Awake");
+        var extFrame=new RenderTexture(32,18,0) { Stamp=1 };
+        cam.SubmitExternalFrame(extFrame);
+
+        var driverOut=new RawImage();var driverOverlay=new RawImage();
+        var passengerOut=new RawImage();var passengerOverlay=new RawImage();
+        var passengerView=new SecondaryViewpoint
+        {
+            Name="Passenger",
+            PostProcessorsRoot=passengerRoot,
+            OutputImage=passengerOut,
+            PostProcessingOutputImage=passengerOverlay,
+            CPUPostProcessingContainer=new RectTransform()
+        };
+
+        var pipeline=new Pipeline
+        {
+            OutputImage=driverOut,
+            PostProcessingOutputImage=driverOverlay,
+            CPUPostProcessingContainer=new RectTransform()
+        };
+        pipeline.SetSourceInput(cam);
+        pipeline.SetPostProcessorsRoot(driverRoot);
+        pipeline.SetSecondaryViewpoints(new[]{passengerView});
+        Invoke(pipeline,typeof(Pipeline),"Awake");
+        Invoke(pipeline,typeof(Pipeline),"Start");
+
+        var driverShader=(ComputeShader)Get(driverProc,typeof(PostProcessor),"runtimeShader");
+        var passengerShader=(ComputeShader)Get(passengerProc,typeof(PostProcessor),"runtimeShader");
+        Check(driverShader!=null && passengerShader!=null && !ReferenceEquals(driverShader,passengerShader) && !ReferenceEquals(driverShader,sharedAsset),
+            "PostProcessors sharing a ComputeShader asset were not isolated into separate runtime instances");
+        Check(!ReferenceEquals(driverShader.BoundTextures["0:Result"],passengerShader.BoundTextures["0:Result"]),
+            "Driver and Passenger PostProcessors bound the same Result RenderTexture");
+
+        Until(()=>pipeline.PublishedFrameCount==1);
+        Check(seg.Calls==1,"Dual-viewpoint pipeline ran segmentation more than once for a single shared frame");
+        Check(driverOut.texture!=null && passengerOut.texture!=null && driverOverlay.texture!=passengerOverlay.texture,
+            "Dual-viewpoint pipeline did not publish distinct asymmetric overlays");
+        Check(driverShader.Dispatches==1 && passengerShader.Dispatches==1,
+            "Both Driver and Passenger shader stacks should execute once per published frame");
+
+        // 2. Verify two independent Pipelines (e.g., Left Eye + Right Eye stereo CAVE feeds) run without colliding.
+        var rightSeg=new SegmentationProbe();Prepare(rightSeg);
+        var rightDepth=new DepthProbe { Segmentation=rightSeg };Prepare(rightDepth);
+        var rightCam=new CameraInput { startOnAwake=false, RegisterAsGlobalInstance=false, AutoPollExternalTexture=false };
+        Invoke(rightCam,typeof(CameraInput),"Awake");
+        rightCam.SubmitExternalFrame(new RenderTexture(32,18,0) { Stamp=55 });
+
+        var rightRoot=new GameObject("RightEyeEffects").transform;
+        var rightOut=new RawImage();
+        var rightPipeline=new Pipeline { OutputImage=rightOut, CPUPostProcessingContainer=new RectTransform() };
+        Set(rightPipeline,typeof(Pipeline),"segmentationModel",rightSeg);
+        Set(rightPipeline,typeof(Pipeline),"depthModel",rightDepth);
+        rightPipeline.SetSourceInput(rightCam);
+        rightPipeline.SetPostProcessorsRoot(rightRoot);
+        Invoke(rightPipeline,typeof(Pipeline),"Awake");
+        Invoke(rightPipeline,typeof(Pipeline),"Start");
+        Until(()=>rightPipeline.PublishedFrameCount==1);
+        Check(rightOut.texture.Stamp==rightCam.FrameId && pipeline.PublishedFrameCount==1,
+            "Independent stereo Pipeline collided with the primary Pipeline");
+    }
+
+    private static void FastEnterPlayModeStaticReset()
+    {
+        var cam=new CameraInput { startOnAwake=false };
+        Invoke(cam,typeof(CameraInput),"Awake");
+        Check(CameraInput.Instance!=null,"CameraInput.Instance was not set before reset check");
+        foreach(var method in typeof(CameraInput).GetMethods(BindingFlags.Static|BindingFlags.NonPublic|BindingFlags.Public))
+        {
+            var attr=method.GetCustomAttribute<RuntimeInitializeOnLoadMethodAttribute>();
+            if(attr!=null && attr.loadType==RuntimeInitializeLoadType.SubsystemRegistration)
+                method.Invoke(null,null);
+        }
+        Check(CameraInput.Instance==null,"CameraInput did not clear static Instance on SubsystemRegistration (Fast Enter Play Mode)");
+    }
+
+    private static void Yolo27AndEndToEndSupport()
+    {
+        // 1. Dense YOLO26s-seg / YOLO27s-seg (end2end=False): (1, 116, 8400) + (1, 32, 160, 160)
+        YOLOSegmentationRunner.ResolveOutputLayout(
+            "Float(1, 116, 8400)", "Float(1, 32, 160, 160)", "yolo26s-seg", 80, 32, YoloOutputFormat.Auto,
+            out var denseFmt, out bool denseTranspose, out int denseProtos, out int denseH, out int denseW);
+        Check(denseFmt==YoloOutputFormat.DenseAnchors && !denseTranspose && denseProtos==32 && denseH==160 && denseW==160,
+            "Dense (1, 116, 8400) layout was not resolved as DenseAnchors 160x160");
+
+        // 2. End-to-End NMS-free YOLO27m-seg / YOLO26 default export (end2end=True): (1, 300, 38) + (1, 32, 160, 160)
+        YOLOSegmentationRunner.ResolveOutputLayout(
+            "Float(1, 300, 38)", "Float(1, 32, 160, 160)", "yolo27m-seg", 80, 32, YoloOutputFormat.Auto,
+            out var e2eFmt, out bool e2eTranspose, out int e2eProtos, out int e2eH, out int e2eW);
+        Check(e2eFmt==YoloOutputFormat.EndToEnd && !e2eTranspose && e2eProtos==32 && e2eH==160 && e2eW==160,
+            "End-to-End (1, 300, 38) layout was not resolved as EndToEnd 160x160");
+
+        // 3. High-res YOLO27l-seg (800x800 -> 200x200 prototype grid)
+        YOLOSegmentationRunner.ResolveOutputLayout(
+            "Float(1, 300, 38)", "Float(1, 32, 200, 200)", "yolo27l-seg", 80, 32, YoloOutputFormat.Auto,
+            out var lFmt, out _, out int lProtos, out int lH, out int lW);
+        Check(lFmt==YoloOutputFormat.EndToEnd && lProtos==32 && lH==200 && lW==200,
+            "YOLO27l-seg 800x800 (200x200 prototypes) layout was not resolved accurately");
+
+        // 4. Disambiguate custom 2-class Dense (1, 38, 8400) vs End-to-End (1, 300, 38)
+        YOLOSegmentationRunner.ResolveOutputLayout(
+            "Float(1, 38, 8400)", "Float(1, 32, 160, 160)", "custom-2class-seg", 2, 32, YoloOutputFormat.Auto,
+            out var twoClassDense, out _, out _, out _, out _);
+        Check(twoClassDense==YoloOutputFormat.DenseAnchors,
+            "Custom 2-class dense model (1, 38, 8400) was misclassified as EndToEnd");
+
+        // 5. Exercise PrepareModel() compilation across both EndToEnd and DenseAnchors graphs
+        try
+        {
+            Unity.InferenceEngine.ModelLoader.OverrideLoader = asset => new Unity.InferenceEngine.Model
+            {
+                TestOutputDescriptors = asset != null && asset.name == "yolo27m-seg"
+                    ? new[] { "Float(1, 300, 38)", "Float(1, 32, 200, 200)" }
+                    : new[] { "Float(1, 116, 8400)", "Float(1, 32, 160, 160)" }
+            };
+
+            var yolo27 = new YOLOSegmentationRunner
+            {
+                InputWidth = 800, InputHeight = 800, OutputWidth = 640, OutputHeight = 360,
+                ImageWidth = 1280, ImageHeight = 720, ModelAsset = new Unity.InferenceEngine.ModelAsset { name = "yolo27m-seg" }
+            };
+            Invoke(yolo27, typeof(ModelRunner), "Awake");
+            Check(yolo27.IsPrepared && yolo27.ActiveOutputFormat == YoloOutputFormat.EndToEnd,
+                "YOLO27m-seg EndToEnd PrepareModel did not compile cleanly");
+            Invoke(yolo27, typeof(YOLOSegmentationRunner), "OnDestroy");
+
+            var yolo26 = new YOLOSegmentationRunner
+            {
+                InputWidth = 640, InputHeight = 640, OutputWidth = 640, OutputHeight = 360,
+                ImageWidth = 1280, ImageHeight = 720, ModelAsset = new Unity.InferenceEngine.ModelAsset { name = "yolo26s-seg" }
+            };
+            Invoke(yolo26, typeof(ModelRunner), "Awake");
+            Check(yolo26.IsPrepared && yolo26.ActiveOutputFormat == YoloOutputFormat.DenseAnchors,
+                "YOLO26s-seg DenseAnchors PrepareModel did not compile cleanly");
+            Invoke(yolo26, typeof(YOLOSegmentationRunner), "OnDestroy");
+
+            var migan = new MIGANRunner
+            {
+                InputWidth = 512, InputHeight = 512, OutputWidth = 1280, OutputHeight = 720,
+                ImageWidth = 1280, ImageHeight = 720, EnableTemporalStabilization = true,
+                ModelAsset = new Unity.InferenceEngine.ModelAsset { name = "migan-512" }
+            };
+            Invoke(migan, typeof(ModelRunner), "Awake");
+            Check(migan.IsPrepared && migan.EnableTemporalStabilization && !migan.LastRunStabilized,
+                "MI-GAN temporal stabilization fields did not initialize cleanly");
+            migan.ResetHistory();
+            Check(!migan.LastRunStabilized && !migan.LastRunReusedHistory,
+                "MI-GAN ResetHistory did not clear stabilization/reuse flags");
+            Invoke(migan, typeof(MIGANRunner), "OnDestroy");
+        }
+        finally
+        {
+            Unity.InferenceEngine.ModelLoader.OverrideLoader = null;
+        }
     }
 }
 

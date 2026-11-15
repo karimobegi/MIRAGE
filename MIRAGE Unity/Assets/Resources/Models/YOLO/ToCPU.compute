@@ -15,7 +15,7 @@ float2 Scale;
 [numthreads(1,1,1)]
 void ToCPU (uint3 id : SV_DispatchThreadID)
 {
-    if (id.x < NumDetections)
+    if (NumDetections > 0 && id.x < (uint)NumDetections)
     {
         // Copy label ID
         LabelIDsOutput[id.x] = LabelIDsInput[id.x];
