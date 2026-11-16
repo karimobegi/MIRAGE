@@ -13,9 +13,23 @@ using ByteTrackCSharp;
 /// </summary>
 public class ObjectInfoPostProcessor : CPUPostProcessor {
 
+    private readonly struct PooledLabel
+    {
+        public readonly GameObject Root;
+        public readonly RectTransform Rect;
+        public readonly TMP_Text Text;
+
+        public PooledLabel(GameObject root, TMP_Text text)
+        {
+            Root = text != null ? text.gameObject : root;
+            Rect = text != null ? text.GetComponent<RectTransform>() : root.GetComponent<RectTransform>();
+            Text = text;
+        }
+    }
+
     public GameObject prefab;
     private TextAsset classes; //get classes from YOLO for formatting
-    private List<TMP_Text> textObjects = new List<TMP_Text>();
+    private readonly List<PooledLabel> textObjects = new List<PooledLabel>();
     private string[] classNames;
 
     public override void Initialize(YOLOSegmentationRunner r, DepthEstimationRunner d, RectTransform op, Pipeline p)
@@ -30,24 +44,32 @@ public class ObjectInfoPostProcessor : CPUPostProcessor {
     }
 
     protected override void UpdateObject(int index, LabelledSTrack track, Vector2 position, Vector2 size) {
-        textObjects[index].GetComponent<RectTransform>().anchoredPosition = position;
-        textObjects[index].gameObject.SetActive(true);
-        textObjects[index].text = GetLabelText(track);
-        textObjects[index].color = GetColorForObject(track);
+        var entry = textObjects[index];
+        if (entry.Rect != null) entry.Rect.anchoredPosition = position;
+        if (entry.Root != null && !entry.Root.activeSelf) entry.Root.SetActive(true);
+        if (entry.Text != null) {
+            entry.Text.text = GetLabelText(track);
+            entry.Text.color = GetColorForObject(track);
+        }
     }
 
     protected override void CreateObject(LabelledSTrack track, Vector2 position, Vector2 size) {
         GameObject obj = Instantiate(prefab, outputContainer.transform);
         obj.GetComponent<RectTransform>().anchoredPosition = position;
         TMP_Text text = obj.GetComponentInChildren<TMP_Text>();
-        text.text = GetLabelText(track);
-        text.color = GetColorForObject(track);
-        textObjects.Add(text);
+        var entry = new PooledLabel(obj, text);
+        if (entry.Rect != null) entry.Rect.anchoredPosition = position;
+        if (entry.Text != null) {
+            entry.Text.text = GetLabelText(track);
+            entry.Text.color = GetColorForObject(track);
+        }
+        textObjects.Add(entry);
     }
 
     protected override void DeactivateRemainingObjects(int startIndex) {
         for(int i = startIndex; i < textObjects.Count; i++) {
-            textObjects[i].gameObject.SetActive(false);
+            if (textObjects[i].Root != null && textObjects[i].Root.activeSelf)
+                textObjects[i].Root.SetActive(false);
         }
     }
 
@@ -70,11 +92,11 @@ public class ObjectInfoPostProcessor : CPUPostProcessor {
     protected override void OnClassesUpdated()
     {
         // Clear or update existing text objects as needed
-        foreach (var textObject in textObjects)
+        foreach (var entry in textObjects)
         {
-            if (textObject != null)
+            if (entry.Root != null && entry.Root.activeSelf)
             {
-                textObject.gameObject.SetActive(false);
+                entry.Root.SetActive(false);
             }
         }
     }

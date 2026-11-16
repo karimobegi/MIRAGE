@@ -17,11 +17,10 @@ int height;
 uint inputWidth;
 uint inputHeight;
 
-// Compute Gaussian weights
-float GaussianWeight(int x, float sigma)
+// Unnormalized Gaussian tap weight (constant normalization cancels in color /= weightSum)
+float GaussianWeightFast(int x, float invTwoSigmaSq)
 {
-    float sigmaSq = sigma * sigma;
-    return exp(-(x * x) / (2.0 * sigmaSq)) / sqrt(2.0 * 3.14159 * sigmaSq);
+    return exp((float)(x * x) * invTwoSigmaSq);
 }
 
 [numthreads(8,8,1)]
@@ -46,22 +45,19 @@ void HorizontalBlur(uint3 id : SV_DispatchThreadID)
     float4 effectColor = GetColorForClassAndDepth(classIndex, depth);
     if (effectColor.r > 0)
     {
-        // Make sure we get non-zero values
-        int radius = max(1, (int)(effectColor.r * 255));
-        float sigma = max(0.1, effectColor.g * 255.0);
-        
-        // Debug validation
-        radius = min(radius, 30); // Cap maximum radius
+        int radius = clamp((int)(effectColor.r * 255), 1, 30);
+        float sigma = max(0.1f, effectColor.g * 255.0f);
+        float invTwoSigmaSq = -0.5f / (sigma * sigma);
+        int maxCoordX = (int)inputWidth - 1;
         
         for (int i = -radius; i <= radius; i++)
         {
-            int2 sampleCoord = int2(clamp(inputCoord.x + i, 0, inputWidth - 1), inputCoord.y);
-            float weight = GaussianWeight(i, sigma);
+            int2 sampleCoord = int2(clamp(inputCoord.x + i, 0, maxCoordX), inputCoord.y);
+            float weight = GaussianWeightFast(i, invTwoSigmaSq);
             color += InputTexture[sampleCoord] * weight;
             weightSum += weight;
         }
-        color /= weightSum;
-        TempResult[inputCoord] = color;
+        TempResult[inputCoord] = color / weightSum;
     }
     else
     {
@@ -85,30 +81,24 @@ void VerticalBlur(uint3 id : SV_DispatchThreadID)
     float depth = ReadObjectDepth(objectId);
 
     int2 inputCoord = int2(id.x, inputHeight - 1 - id.y);
-    float4 color = float4(0, 0, 0, 0);
-    float weightSum = 0;
-
     float4 effectColor = GetColorForClassAndDepth(classIndex, depth);
     if (effectColor.r > 0)
     {
-        int radius = max(1, (int)(effectColor.r * 255.0));
-        float sigma = max(0.1, effectColor.g * 255.0);
-        
-        radius = min(radius, 30); // Cap maximum radius
-        
+        int radius = clamp((int)(effectColor.r * 255.0f), 1, 30);
+        float sigma = max(0.1f, effectColor.g * 255.0f);
+        float invTwoSigmaSq = -0.5f / (sigma * sigma);
+        int maxCoordY = (int)inputHeight - 1;
+
+        float4 color = float4(0, 0, 0, 0);
+        float weightSum = 0;
         for (int i = -radius; i <= radius; i++)
         {
-            int2 sampleCoord = int2(inputCoord.x, clamp(inputCoord.y + i, 0, inputHeight - 1));
-            float weight = GaussianWeight(i, sigma);
+            int2 sampleCoord = int2(inputCoord.x, clamp(inputCoord.y + i, 0, maxCoordY));
+            float weight = GaussianWeightFast(i, invTwoSigmaSq);
             color += TempResult[sampleCoord] * weight;
             weightSum += weight;
         }
-        color /= weightSum;
-        Result[inputCoord] = color;
-    }
-    else if(Result[inputCoord].a == 0)
-    {   
-        Result[inputCoord] = float4(0,0,0,0);
+        Result[inputCoord] = color / weightSum;
     }
 }
 

@@ -15,6 +15,18 @@ public abstract class DepthEstimationRunner : ModelRunner
     public virtual bool UsesMetricDepth => false;
     public virtual string DepthUnitLabel => UsesMetricDepth ? "m" : "relative";
 
+    /// <summary>
+    /// When false, GPU per-object reduction still populates ObjectDepthBuffer without stalling for CPU readback.
+    /// </summary>
+    public bool RequireCpuDepthReadback { get; set; } = true;
+
+    /// <summary>
+    /// False on frames where Pipeline intentionally skipped depth execution (e.g., AutoSkipDepthWhenIdle).
+    /// </summary>
+    public bool ActiveThisFrame { get; internal set; } = true;
+
+    public bool IsDepthFilteringActive => IsEnabled && IsPrepared && ActiveThisFrame;
+
     public bool TryGetDepth(int detectionIndex, out float depth)
     {
         var values = DepthData;

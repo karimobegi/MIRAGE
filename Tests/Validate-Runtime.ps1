@@ -20,6 +20,8 @@ $sources = @(
     (Join-Path $runtimeRoot 'PostProcessing/ImageCopyPostProcessor.cs'),
     (Join-Path $runtimeRoot 'PostProcessing/GaussianBlurImagePostProcessor.cs'),
     (Join-Path $runtimeRoot 'PostProcessing/ObjectInfoPostProcessor.cs'),
+    (Join-Path $runtimeRoot 'PostProcessing/IconPostProcessor.cs'),
+    (Join-Path $runtimeRoot 'PostProcessing/BoundsPostProcessor.cs'),
     (Join-Path $runtimeRoot 'Models/MI-GAN/InpaintingMaskBuilder.cs'),
     (Join-Path $runtimeRoot 'Models/MI-GAN/InpaintingCropUtility.cs'),
     (Join-Path $runtimeRoot 'Models/MI-GAN/MIGANRunner.cs'),

@@ -16,6 +16,7 @@ public class MoebiusRunner : InpaintingRunner, IEffectHandler
 {
     public EffectType EffectType => EffectType.Inpainting;
     public InpaintingSetting[] SelectedClasses = Array.Empty<InpaintingSetting>();
+    public override bool HasActiveSelection => SelectedClasses != null && SelectedClasses.Length > 0;
 
     [Tooltip("Start python moebius.py serve first. Only loopback HTTP endpoints are accepted.")]
     public string ServerUrl = "http://127.0.0.1:8765";

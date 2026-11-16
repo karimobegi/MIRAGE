@@ -82,7 +82,7 @@ public abstract class CPUPostProcessor : MonoBehaviour, IEffectHandler
                 }
             }
             
-            IsRunning = classSettingsMap.Count > 0;
+            IsRunning = classSettings != null && classSettings.Length > 0;
             OnClassesUpdated();
         }
 
@@ -163,7 +163,7 @@ public abstract class CPUPostProcessor : MonoBehaviour, IEffectHandler
             int classId = track.Label;
             if (track.Detection < 0 || track.Detection >= yolo26.NumObjDetected ||
                 yolo26.LabelIDs[track.Detection] != classId) return false;
-            bool useDepth = depthEstimationRunner.IsEnabled && depthEstimationRunner.IsPrepared;
+            bool useDepth = depthEstimationRunner.IsDepthFilteringActive;
             float depth = 0f;
             if (useDepth && !depthEstimationRunner.TryGetDepth(track.Detection, out depth)) return false;
 
@@ -179,7 +179,7 @@ public abstract class CPUPostProcessor : MonoBehaviour, IEffectHandler
 
         protected Color GetColorForObject(LabelledSTrack track) {
             int classId = track.Label;
-            bool useDepth = depthEstimationRunner.IsEnabled && depthEstimationRunner.IsPrepared;
+            bool useDepth = depthEstimationRunner.IsDepthFilteringActive;
             float depth = 0f;
             if (useDepth && !depthEstimationRunner.TryGetDepth(track.Detection, out depth)) return Color.clear;
 

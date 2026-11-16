@@ -12,6 +12,9 @@ public abstract class InpaintingRunner : ModelRunner
     // Disabled depth estimation means class-only effect selection.
     public bool UseDepthFilter { get; set; } = true;
 
+    /// <summary>False when no classes are currently selected for inpainting, allowing Pipeline to skip per-frame setup/clears.</summary>
+    public virtual bool HasActiveSelection => true;
+
     /// <summary>Discard cached fills when switching input, seeking, or changing models.</summary>
     public virtual void ResetHistory() { }
 

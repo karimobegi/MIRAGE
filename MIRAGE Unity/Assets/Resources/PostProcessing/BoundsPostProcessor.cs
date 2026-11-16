@@ -34,8 +34,22 @@ public class BoundsPostProcessor : CPUPostProcessor
     /// The prefab used to create the image objects.
     /// This prefab should have a RectTransform and an Image component.
     /// </summary>
+    private readonly struct PooledBounds
+    {
+        public readonly GameObject Root;
+        public readonly RectTransform Rect;
+        public readonly Image Image;
+
+        public PooledBounds(GameObject root)
+        {
+            Root = root;
+            Rect = root.GetComponent<RectTransform>();
+            Image = root.GetComponent<Image>();
+        }
+    }
+
     public GameObject ImagePrefab;
-    private List<GameObject> imageObjects = new List<GameObject>();
+    private readonly List<PooledBounds> imageObjects = new List<PooledBounds>();
 
     /// <summary>
     /// Aspect ratio of the image prefab.
@@ -63,8 +77,7 @@ public class BoundsPostProcessor : CPUPostProcessor
     }
 
     protected override void UpdateObject(int index, LabelledSTrack track, Vector2 position, Vector2 size) {
-        var rect = imageObjects[index].GetComponent<RectTransform>();
-        var image = imageObjects[index].GetComponent<Image>();
+        var entry = imageObjects[index];
 
         // Adjust size based on aspect ratio setting
         if (MaintainImageAspectRatio) {
@@ -75,17 +88,18 @@ public class BoundsPostProcessor : CPUPostProcessor
             }
         }
 
-        rect.sizeDelta = size;
-        rect.anchoredPosition = position;
-        image.color = GetColorForObject(track);
-        imageObjects[index].SetActive(true);
+        if (entry.Rect != null) {
+            entry.Rect.sizeDelta = size;
+            entry.Rect.anchoredPosition = position;
+        }
+        if (entry.Image != null) entry.Image.color = GetColorForObject(track);
+        if (entry.Root != null && !entry.Root.activeSelf) entry.Root.SetActive(true);
     }
 
     protected override void CreateObject(LabelledSTrack track, Vector2 position, Vector2 size) {
         GameObject box = Instantiate(ImagePrefab, outputContainer.transform);
-        imageObjects.Add(box);
-        var rect = box.GetComponent<RectTransform>();
-        var image = box.GetComponent<Image>();
+        var entry = new PooledBounds(box);
+        imageObjects.Add(entry);
 
         // Adjust size based on aspect ratio setting
         if (MaintainImageAspectRatio) {
@@ -96,25 +110,28 @@ public class BoundsPostProcessor : CPUPostProcessor
             }
         }
 
-        rect.sizeDelta = size;
-        rect.anchoredPosition = position;
-        image.color = GetColorForObject(track);
+        if (entry.Rect != null) {
+            entry.Rect.sizeDelta = size;
+            entry.Rect.anchoredPosition = position;
+        }
+        if (entry.Image != null) entry.Image.color = GetColorForObject(track);
     }
 
     protected override void DeactivateRemainingObjects(int startIndex) {
         for(int i = startIndex; i < imageObjects.Count; i++) {
-            imageObjects[i].SetActive(false);
+            if (imageObjects[i].Root != null && imageObjects[i].Root.activeSelf)
+                imageObjects[i].Root.SetActive(false);
         }
     }
 
 #endregion
     protected override void OnClassesUpdated()
     {
-        foreach (var textObject in imageObjects)
+        foreach (var entry in imageObjects)
         {
-            if (textObject != null)
+            if (entry.Root != null && entry.Root.activeSelf)
             {
-                textObject.gameObject.SetActive(false);
+                entry.Root.SetActive(false);
             }
         }
     }

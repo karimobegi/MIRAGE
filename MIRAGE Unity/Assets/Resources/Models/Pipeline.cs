@@ -28,6 +28,9 @@ public sealed class SecondaryViewpoint
     [NonSerialized] internal RenderTexture PostProcessingOverlay;
     [NonSerialized] internal RenderTexture ImagePostProcessingOverlay;
     [NonSerialized] internal RenderTexture PresentedInpainting;
+    [NonSerialized] internal bool OverlayCleared = true;
+    [NonSerialized] internal bool ImageOverlayCleared = true;
+    [NonSerialized] internal bool InpaintingCleared = true;
 }
 
 /// <summary>
@@ -38,6 +41,10 @@ public sealed class SecondaryViewpoint
 public class Pipeline : MonoBehaviour
 {
     public bool RunAsSequence;
+    [Tooltip("Keep GPU->CPU metadata readbacks and ByteTrack active even when all CPU post-processors (Icon, Info, Bounds, Transform) are off.")]
+    public bool ForceCpuMetadataReadback;
+    [Tooltip("Skip running the depth model on frames where no GPU/CPU post-processor or inpainting selection is active.")]
+    public bool AutoSkipDepthWhenIdle;
     public RawImage OutputImage;
     public RawImage PostProcessingOutputImage;
     public RawImage ImagePostprocessingOutputImage;
@@ -76,7 +83,12 @@ public class Pipeline : MonoBehaviour
     private RenderTexture processingFrame, presentedFrame, presentedInpainting;
     private IBenchmarkManager benchmarkManager;
     private BYTETracker tracker;
+    private readonly List<ByteTrackCSharp.Object> trackInputs = new List<ByteTrackCSharp.Object>(64);
     public List<LabelledSTrack> labelledTracks = new List<LabelledSTrack>();
+    private bool overlayCleared = true;
+    private bool imageOverlayCleared = true;
+    private bool presentedInpaintingCleared = true;
+    private bool wasTrackingCpuObjects;
     private long lastSourceVersion = -1;
     private long lastConsumedFrame = -1;
     private CameraInput lastSource;
@@ -211,9 +223,15 @@ public class Pipeline : MonoBehaviour
             int frameSettingsRevision = settingsRevision;
             lastConsumedFrame = frameId;
             Graphics.Blit(source.CurrentFrame, processingFrame);
+            bool needCpuMetadata = ForceCpuMetadataReadback || HasActiveCpuPostProcessors();
+            segmentationModel.RequireCpuMetadataReadback = needCpuMetadata;
+            depthModel.RequireCpuDepthReadback = needCpuMetadata;
+
             segmentationModel.SetInputFrame(frameId, capturedAt);
             depthModel.SetInputFrame(frameId, capturedAt);
-            bool useDepth = depthModel.IsEnabled && depthModel.IsPrepared;
+            bool skipIdleDepth = AutoSkipDepthWhenIdle && !needCpuMetadata && !HasAnyActiveGpuOrInpaintingEffect();
+            bool useDepth = depthModel.IsEnabled && depthModel.IsPrepared && !skipIdleDepth;
+            depthModel.ActiveThisFrame = useDepth;
             if (!useDepth) depthModel.ResetOutput();
             benchmarkManager.StartIteration();
 
@@ -245,9 +263,22 @@ public class Pipeline : MonoBehaviour
                 SetTiming(depthEstimationTimeText, "Depth including aligned object reduction", depthStartedAt);
                 benchmarkManager.EndDepthEstimation();
             }
-            UpdateTracks();
+            if (needCpuMetadata)
+            {
+                if (!wasTrackingCpuObjects)
+                {
+                    ResetTracking();
+                    wasTrackingCpuObjects = true;
+                }
+                UpdateTracks();
+            }
+            else if (wasTrackingCpuObjects)
+            {
+                ResetTracking();
+                wasTrackingCpuObjects = false;
+            }
 
-            bool didInpaint = inpaintingModel != null && inpaintingModel.IsEnabled && inpaintingModel.IsPrepared;
+            bool didInpaint = inpaintingModel != null && inpaintingModel.IsEnabled && inpaintingModel.IsPrepared && inpaintingModel.HasActiveSelection;
             if (didInpaint)
             {
                 inpaintingModel.SetInputFrame(frameId, capturedAt);
@@ -263,7 +294,8 @@ public class Pipeline : MonoBehaviour
             foreach (var viewpoint in secondaryViewpoints)
             {
                 var secondaryInpaint = viewpoint?.InpaintingModel;
-                if (secondaryInpaint == null || secondaryInpaint == inpaintingModel || !secondaryInpaint.IsEnabled || !secondaryInpaint.IsPrepared)
+                if (secondaryInpaint == null || secondaryInpaint == inpaintingModel || !secondaryInpaint.IsEnabled ||
+                    !secondaryInpaint.IsPrepared || !secondaryInpaint.HasActiveSelection)
                     continue;
                 secondaryInpaint.SetInputFrame(frameId, capturedAt);
                 secondaryInpaint.UseDepthFilter = useDepth;
@@ -283,8 +315,15 @@ public class Pipeline : MonoBehaviour
             if (presentedInpainting != null)
             {
                 if (didInpaint && inpaintingModel.OutputTexture != null)
+                {
                     Graphics.Blit(inpaintingModel.OutputTexture, presentedInpainting);
-                else Clear(presentedInpainting);
+                    presentedInpaintingCleared = false;
+                }
+                else if (!presentedInpaintingCleared)
+                {
+                    Clear(presentedInpainting);
+                    presentedInpaintingCleared = true;
+                }
                 if (inpaintingModel.OutputImage != null) inpaintingModel.OutputImage.texture = presentedInpainting;
             }
             foreach (var viewpoint in secondaryViewpoints)
@@ -294,10 +333,18 @@ public class Pipeline : MonoBehaviour
                 if (viewpoint.PresentedInpainting != null)
                 {
                     bool secondaryDidInpaint = secondaryInpaint != null && secondaryInpaint.IsEnabled &&
-                        secondaryInpaint.IsPrepared && secondaryInpaint.OutputFrameId == frameId && secondaryInpaint.OutputTexture != null;
+                        secondaryInpaint.IsPrepared && secondaryInpaint.HasActiveSelection &&
+                        secondaryInpaint.OutputFrameId == frameId && secondaryInpaint.OutputTexture != null;
                     if (secondaryDidInpaint)
+                    {
                         Graphics.Blit(secondaryInpaint.OutputTexture, viewpoint.PresentedInpainting);
-                    else Clear(viewpoint.PresentedInpainting);
+                        viewpoint.InpaintingCleared = false;
+                    }
+                    else if (!viewpoint.InpaintingCleared)
+                    {
+                        Clear(viewpoint.PresentedInpainting);
+                        viewpoint.InpaintingCleared = true;
+                    }
                     if (secondaryInpaint.OutputImage != null) secondaryInpaint.OutputImage.texture = viewpoint.PresentedInpainting;
                     if (viewpoint.InpaintingOutputImage != null) viewpoint.InpaintingOutputImage.texture = viewpoint.PresentedInpainting;
                 }
@@ -347,15 +394,74 @@ public class Pipeline : MonoBehaviour
 
     private void UpdateTracks()
     {
-        var objects = new List<ByteTrackCSharp.Object>(segmentationModel.NumObjDetected);
+        int count = segmentationModel.NumObjDetected;
+        trackInputs.Clear();
+        if (trackInputs.Capacity < count) trackInputs.Capacity = count;
         var boxes = segmentationModel.BBoxes;
-        for (int i = 0; i < segmentationModel.NumObjDetected; i++)
+        var labels = segmentationModel.LabelIDs;
+        var scores = segmentationModel.Scores;
+        for (int i = 0; i < count; i++)
         {
             float w = boxes[i * 4 + 2], h = boxes[i * 4 + 3];
-            objects.Add(new ByteTrackCSharp.Object(new ByteTrackCSharp.Rect(boxes[i * 4] - w / 2f,
-                boxes[i * 4 + 1] - h / 2f, w, h), segmentationModel.LabelIDs[i], segmentationModel.Scores[i], i));
+            trackInputs.Add(new ByteTrackCSharp.Object(new ByteTrackCSharp.Rect(boxes[i * 4] - w / 2f,
+                boxes[i * 4 + 1] - h / 2f, w, h), labels[i], scores[i], i));
         }
-        labelledTracks = tracker.update(objects).Cast<LabelledSTrack>().ToList();
+        var updated = tracker.update(trackInputs);
+        labelledTracks.Clear();
+        for (int i = 0; i < updated.Count; i++)
+        {
+            if (updated[i] is LabelledSTrack labelled)
+                labelledTracks.Add(labelled);
+        }
+    }
+
+    private bool HasActiveCpuPostProcessors()
+    {
+        if (cpuPostProcessors != null)
+        {
+            for (int i = 0; i < cpuPostProcessors.Length; i++)
+                if (cpuPostProcessors[i] != null && cpuPostProcessors[i].enabled && cpuPostProcessors[i].IsRunning)
+                    return true;
+        }
+        if (secondaryViewpoints != null)
+        {
+            for (int v = 0; v < secondaryViewpoints.Length; v++)
+            {
+                var cpu = secondaryViewpoints[v]?.CpuPostProcessors;
+                if (cpu == null) continue;
+                for (int i = 0; i < cpu.Length; i++)
+                    if (cpu[i] != null && cpu[i].enabled && cpu[i].IsRunning)
+                        return true;
+            }
+        }
+        return false;
+    }
+
+    private bool HasAnyActiveGpuOrInpaintingEffect()
+    {
+        if (inpaintingModel != null && inpaintingModel.IsEnabled && inpaintingModel.IsPrepared && inpaintingModel.HasActiveSelection)
+            return true;
+        if (gpuPostProcessors != null)
+        {
+            for (int i = 0; i < gpuPostProcessors.Length; i++)
+                if (gpuPostProcessors[i] != null && gpuPostProcessors[i].enabled && gpuPostProcessors[i].IsRunning)
+                    return true;
+        }
+        if (secondaryViewpoints != null)
+        {
+            for (int v = 0; v < secondaryViewpoints.Length; v++)
+            {
+                var vp = secondaryViewpoints[v];
+                if (vp == null) continue;
+                if (vp.InpaintingModel != null && vp.InpaintingModel.IsEnabled && vp.InpaintingModel.IsPrepared && vp.InpaintingModel.HasActiveSelection)
+                    return true;
+                if (vp.GpuPostProcessors == null) continue;
+                for (int i = 0; i < vp.GpuPostProcessors.Length; i++)
+                    if (vp.GpuPostProcessors[i] != null && vp.GpuPostProcessors[i].enabled && vp.GpuPostProcessors[i].IsRunning)
+                        return true;
+            }
+        }
+        return false;
     }
 
     private void PostProcessing(RenderTexture frame)
@@ -363,11 +469,13 @@ public class Pipeline : MonoBehaviour
         benchmarkManager.StartPostProcessing();
         double start = Time.realtimeSinceStartupAsDouble;
         ExecuteViewpointPostProcessing(frame, postProcessingOverlay, imagePostProcessingOverlay,
+            ref overlayCleared, ref imageOverlayCleared,
             gpuPostProcessors, cpuPostProcessors, OutputImage, PostProcessingOutputImage, ImagePostprocessingOutputImage);
         foreach (var viewpoint in secondaryViewpoints)
         {
             if (viewpoint == null) continue;
             ExecuteViewpointPostProcessing(frame, viewpoint.PostProcessingOverlay, viewpoint.ImagePostProcessingOverlay,
+                ref viewpoint.OverlayCleared, ref viewpoint.ImageOverlayCleared,
                 viewpoint.GpuPostProcessors, viewpoint.CpuPostProcessors,
                 viewpoint.OutputImage, viewpoint.PostProcessingOutputImage, viewpoint.ImagePostprocessingOutputImage);
         }
@@ -379,29 +487,86 @@ public class Pipeline : MonoBehaviour
         RenderTexture frame,
         RenderTexture overlay,
         RenderTexture imageOverlay,
+        ref bool overlayCleared,
+        ref bool imageOverlayCleared,
         PostProcessor[] gpuProcessors,
         CPUPostProcessor[] cpuProcessors,
         RawImage outputTarget,
         RawImage overlayTarget,
         RawImage imageOverlayTarget)
     {
-        if (overlay != null) Clear(overlay);
-        if (imageOverlay != null) Clear(imageOverlay);
+        bool needOverlay = false;
+        bool needImageOverlay = false;
         if (gpuProcessors != null)
+        {
+            for (int i = 0; i < gpuProcessors.Length; i++)
+            {
+                var processor = gpuProcessors[i];
+                if (processor == null || !processor.enabled || !processor.IsRunning) continue;
+                if (processor is ImagePostProcessor)
+                {
+                    if (!(processor is ImageCopyPostProcessor)) needImageOverlay = true;
+                }
+                else if (processor.ClassSettings != null && processor.ClassSettings.Length > 0)
+                {
+                    needOverlay = true;
+                }
+            }
+        }
+
+        if (overlay != null)
+        {
+            if (needOverlay)
+            {
+                Clear(overlay);
+                overlayCleared = false;
+            }
+            else if (!overlayCleared)
+            {
+                Clear(overlay);
+                overlayCleared = true;
+            }
+        }
+
+        if (imageOverlay != null)
+        {
+            if (needImageOverlay)
+            {
+                Clear(imageOverlay);
+                imageOverlayCleared = false;
+            }
+            else if (!imageOverlayCleared)
+            {
+                Clear(imageOverlay);
+                imageOverlayCleared = true;
+            }
+        }
+
+        if (gpuProcessors != null && (needOverlay || needImageOverlay || HasRunningImageCopy(gpuProcessors)))
         {
             foreach (var processor in gpuProcessors)
             {
+                if (processor == null || !processor.enabled || !processor.IsRunning) continue;
                 if (processor is ImagePostProcessor imageProcessor) imageProcessor.ExecuteShader(frame);
                 else processor.ExecuteShader();
             }
         }
         if (cpuProcessors != null)
         {
-            foreach (var processor in cpuProcessors) processor.Execute();
+            foreach (var processor in cpuProcessors)
+                if (processor != null && processor.enabled && processor.IsRunning) processor.Execute();
         }
         if (outputTarget != null) outputTarget.texture = frame;
         if (overlayTarget != null) overlayTarget.texture = overlay;
         if (imageOverlayTarget != null) imageOverlayTarget.texture = imageOverlay;
+    }
+
+    private static bool HasRunningImageCopy(PostProcessor[] gpuProcessors)
+    {
+        for (int i = 0; i < gpuProcessors.Length; i++)
+            if (gpuProcessors[i] is ImageCopyPostProcessor copy && copy.enabled && copy.IsRunning)
+                return true;
+        return false;
     }
 
     private static T[] DiscoverProcessors<T>(Transform root, Transform[] excludedRoots) where T : MonoBehaviour

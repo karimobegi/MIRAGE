@@ -91,10 +91,24 @@ public sealed class InpaintingMaskBuilder : IDisposable
 
         // Snapshot the selected masks before yielding. Subsequent model updates
         // cannot change this run's mask or object bounds.
-        ProcessMask("DilateHorizontal", RawMask, scratch, Mathf.Clamp(dilationPixels, 0, 16));
-        ProcessMask("DilateVertical", scratch, dilated, Mathf.Clamp(dilationPixels, 0, 16));
-        ProcessMask("FeatherHorizontal", dilated, scratch, Mathf.Clamp(featherPixels, 0, 16));
-        ProcessMask("FeatherVertical", scratch, AlphaMask, Mathf.Clamp(featherPixels, 0, 16));
+        int clampedDilation = Mathf.Clamp(dilationPixels, 0, 16);
+        int clampedFeather = Mathf.Clamp(featherPixels, 0, 16);
+        RenderTexture afterDilation = RawMask;
+        if (clampedDilation > 0)
+        {
+            ProcessMask("DilateHorizontal", RawMask, scratch, clampedDilation);
+            ProcessMask("DilateVertical", scratch, dilated, clampedDilation);
+            afterDilation = dilated;
+        }
+        if (clampedFeather > 0)
+        {
+            ProcessMask("FeatherHorizontal", afterDilation, scratch, clampedFeather);
+            ProcessMask("FeatherVertical", scratch, AlphaMask, clampedFeather);
+        }
+        else
+        {
+            Graphics.Blit(afterDilation, AlphaMask);
+        }
 
         if (SystemInfo.supportsAsyncGPUReadback)
         {

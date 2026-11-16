@@ -49,6 +49,7 @@ public class DepthAnythingRunner : DepthEstimationRunner
     private int objectCapacity;
     private bool depthReadbackPending;
     private bool hasDepthReadback;
+    private bool hasVisualizationOutput;
     private AsyncGPUReadbackRequest depthReadback;
     private int outputGeneration;
 
@@ -74,14 +75,20 @@ public class DepthAnythingRunner : DepthEstimationRunner
         var unpaddedDepth = output[.., .., 0..InputHeight, 0..InputWidth];
         // Reduction indexes depth and segmentation with exactly the same pixel grid.
         var alignedDepth = Functional.Interpolate(unpaddedDepth, new[] { OutputHeight, OutputWidth }, mode: "linear");
-        runtimeModel = graph.Compile(alignedDepth, alignedDepth / 4f);
+        hasVisualizationOutput = OutputImage != null;
+        runtimeModel = hasVisualizationOutput
+            ? graph.Compile(alignedDepth, alignedDepth / 4f)
+            : graph.Compile(alignedDepth);
 
-        outputTexture = new RenderTexture(OutputWidth, OutputHeight, 0, RenderTextureFormat.ARGB32)
+        if (hasVisualizationOutput)
         {
-            enableRandomWrite = true,
-            name = "MIRAGE depth visualization"
-        };
-        outputTexture.Create();
+            outputTexture = new RenderTexture(OutputWidth, OutputHeight, 0, RenderTextureFormat.ARGB32)
+            {
+                enableRandomWrite = true,
+                name = "MIRAGE depth visualization"
+            };
+            outputTexture.Create();
+        }
         EnsureObjectDepthBuffer();
         groupsX = Mathf.CeilToInt(OutputWidth / 8f);
         groupsY = Mathf.CeilToInt(OutputHeight / 8f);
@@ -106,14 +113,14 @@ public class DepthAnythingRunner : DepthEstimationRunner
     protected override void PeekOutput()
     {
         outputTensor = worker.PeekOutput(0) as Tensor<float>;
-        textureTensor = worker.PeekOutput(1) as Tensor<float>;
+        textureTensor = hasVisualizationOutput ? worker.PeekOutput(1) as Tensor<float> : null;
     }
 
     // Subsequent consumers are GPU commands on the same queue. No dense readback.
     protected override bool RequestsDone() => true;
     protected override void ReadOutput()
     {
-        if (textureTensor != null && OutputImage != null)
+        if (textureTensor != null && PublishOutputToUI && OutputImage != null && outputTexture != null)
         {
             TextureConverter.RenderToTexture(textureTensor, outputTexture);
             UpdateOutputImage();
@@ -155,6 +162,12 @@ public class DepthAnythingRunner : DepthEstimationRunner
         objectDepthCompute.SetBuffer(finalizeKernel, "PartialDepths", partialDepthBuffer);
         objectDepthCompute.SetBuffer(finalizeKernel, "ObjectDepthBuffer", objectDepthBuffer);
         objectDepthCompute.Dispatch(finalizeKernel, Mathf.CeilToInt(objectCapacity / 64f), 1, 1);
+        if (!RequireCpuDepthReadback)
+        {
+            // ObjectDepthBuffer is ready on GPU for downstream compute shaders; clear stale CPU values without overwriting GPU data.
+            Array.Copy(invalidDepths, objectDepths, objectCapacity);
+            yield break;
+        }
         depthReadback = AsyncGPUReadback.Request(objectDepthBuffer);
         hasDepthReadback = true;
         depthReadbackPending = true;

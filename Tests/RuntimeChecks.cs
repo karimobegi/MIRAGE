@@ -43,7 +43,8 @@ public static class MirageRuntimeChecks
         DualViewpointAndShaderIsolation();
         FastEnterPlayModeStaticReset();
         Yolo27AndEndToEndSupport();
-        return "PASS: actual-source disabled-backend/lazy initialization, scheduler budgets/finally, depth validity+units+borrowed ownership, CPU class/detection selection, camera/external-texture lifecycle, sequential+parallel coherence, dual-viewpoint/shader isolation, Fast Enter Play Mode resets, and YOLO27/EndToEnd ONNX graph support.";
+        GpuFastPathAndIdleGating();
+        return "PASS: actual-source disabled-backend/lazy initialization, scheduler budgets/finally, depth validity+units+borrowed ownership, CPU class/detection selection, camera/external-texture lifecycle, sequential+parallel coherence, dual-viewpoint/shader isolation, Fast Enter Play Mode resets, YOLO27/EndToEnd ONNX graph support, and GPU fast-path readback/idle gating.";
     }
 
     private static void DisabledRunnerInitialization()
@@ -511,6 +512,58 @@ public static class MirageRuntimeChecks
         {
             Unity.InferenceEngine.ModelLoader.OverrideLoader = null;
         }
+    }
+
+    private static void GpuFastPathAndIdleGating()
+    {
+        TestScheduler.Reset();
+        var seg = new SegmentationProbe(); Prepare(seg);
+        var depth = new DepthProbe { Segmentation = seg }; Prepare(depth);
+        var migan = new MIGANRunner
+        {
+            InputWidth = 512, InputHeight = 512, OutputWidth = 32, OutputHeight = 18,
+            ImageWidth = 32, ImageHeight = 18, ModelAsset = new Unity.InferenceEngine.ModelAsset()
+        };
+        Invoke(migan, typeof(ModelRunner), "Awake");
+        Check(!migan.HasActiveSelection, "Empty MI-GAN selection should report HasActiveSelection == false");
+
+        var root = new GameObject("EffectsRoot").transform;
+        var cpuEffect = root.gameObject.AddComponent<CpuProbe>();
+        var cam = new CameraInput { startOnAwake = false, AutoPollExternalTexture = false };
+        Invoke(cam, typeof(CameraInput), "Awake");
+        cam.SubmitExternalFrame(new RenderTexture(32, 18, 0) { Stamp = 1 });
+
+        var pipeline = new Pipeline
+        {
+            AutoSkipDepthWhenIdle = true,
+            OutputImage = new RawImage(),
+            CPUPostProcessingContainer = new RectTransform()
+        };
+        Set(pipeline, typeof(Pipeline), "segmentationModel", seg);
+        Set(pipeline, typeof(Pipeline), "depthModel", depth);
+        Set(pipeline, typeof(Pipeline), "inpaintingModel", migan);
+        pipeline.SetSourceInput(cam);
+        pipeline.SetPostProcessorsRoot(root);
+        Invoke(pipeline, typeof(Pipeline), "Awake");
+        Invoke(pipeline, typeof(Pipeline), "Start");
+
+        Check(!cpuEffect.IsRunning, "Disabled CPUPostProcessor with empty settings falsely set IsRunning == true");
+        Until(() => pipeline.PublishedFrameCount == 1);
+        Check(!seg.RequireCpuMetadataReadback && !depth.RequireCpuDepthReadback,
+            "Pipeline did not disable CPU metadata/depth readback stalls when all CPU post-processors were off");
+        Check(pipeline.labelledTracks.Count == 0 && depth.CoherentReads == 0 && !depth.ActiveThisFrame,
+            "Idle pipeline with AutoSkipDepthWhenIdle still ran ByteTrack or depth reduction");
+
+        // Activating a CPU effect should immediately re-enable readbacks, depth, and ByteTrack on the next frame.
+        cpuEffect.UpdateClasses(new System.Collections.Generic.List<EffectSetting> { new PostProcessorSetting(7, Color.white, 0, 10) });
+        Check(cpuEffect.IsRunning, "Enabled CPUPostProcessor with active class did not set IsRunning == true");
+        cam.SubmitExternalFrame(new RenderTexture(32, 18, 0) { Stamp = 2 });
+        Until(() => pipeline.PublishedFrameCount == 2);
+        Check(seg.RequireCpuMetadataReadback && depth.RequireCpuDepthReadback && depth.ActiveThisFrame && depth.CoherentReads == 1,
+            "Activating a CPUPostProcessor did not re-enable CPU readbacks and depth filtering");
+        Check(pipeline.labelledTracks.Count == 1, "Activating a CPUPostProcessor did not resume ByteTrack updates");
+
+        Invoke(migan, typeof(MIGANRunner), "OnDestroy");
     }
 }
 

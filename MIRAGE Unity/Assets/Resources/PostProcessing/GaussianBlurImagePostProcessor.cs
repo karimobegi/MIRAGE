@@ -21,7 +21,6 @@ public class GaussianBlurImagePostProcessor : ImagePostProcessor
     private RenderTexture temporaryRT;
     private int horizontalKernel;
     private int verticalKernel;
-    private int combineKernel;
     private bool blurKernelsReady;
 
     public override void Initialize(SegmentationRunner r, DepthEstimationRunner d, RenderTexture Output)
@@ -48,7 +47,6 @@ public class GaussianBlurImagePostProcessor : ImagePostProcessor
 
         horizontalKernel = activeShader.FindKernel("HorizontalBlur");
         verticalKernel = activeShader.FindKernel("VerticalBlur");
-        combineKernel = kernelHandle;
         blurKernelsReady = true;
         activeShader.SetBuffer(horizontalKernel, "selectedClasses", classSettingsBuffer);
         activeShader.SetBuffer(verticalKernel, "selectedClasses", classSettingsBuffer);
@@ -69,8 +67,11 @@ public class GaussianBlurImagePostProcessor : ImagePostProcessor
         if (depthEstimationRunner.ObjectDepthBuffer == null) return;
         var activeShader = ActiveShader;
         if (activeShader == null) return;
-        activeShader.SetInt("_UseDepthFilter", depthEstimationRunner.IsEnabled && depthEstimationRunner.IsPrepared ? 1 : 0);
+        activeShader.SetInt("_UseDepthFilter", depthEstimationRunner.IsDepthFilteringActive ? 1 : 0);
         activeShader.SetInt("_DepthObjectCapacity", depthEstimationRunner.MaxObjects);
+
+        int groupsX = Mathf.CeilToInt(segmentationRunner.ImageWidth / 8f);
+        int groupsY = Mathf.CeilToInt(segmentationRunner.ImageHeight / 8f);
 
         // Set common buffers and parameters
         activeShader.SetBuffer(horizontalKernel, "outputArray", segmentationRunner.OutputBuffer);
@@ -79,30 +80,15 @@ public class GaussianBlurImagePostProcessor : ImagePostProcessor
         activeShader.SetTexture(horizontalKernel, "TempResult", temporaryRT);
 
         // Horizontal pass
-        activeShader.Dispatch(horizontalKernel,
-            Mathf.CeilToInt(segmentationRunner.ImageWidth / 8f),
-            Mathf.CeilToInt(segmentationRunner.ImageHeight / 8f),
-            1);
+        activeShader.Dispatch(horizontalKernel, groupsX, groupsY, 1);
 
-        // Set up vertical pass
+        // Vertical pass writes directly to Result (already cleared by Pipeline before post-processing)
         activeShader.SetBuffer(verticalKernel, "outputArray", segmentationRunner.OutputBuffer);
         activeShader.SetBuffer(verticalKernel, "objectDepths", depthEstimationRunner.ObjectDepthBuffer);
         activeShader.SetTexture(verticalKernel, "InputTexture", Input);
         activeShader.SetTexture(verticalKernel, "TempResult", temporaryRT);
         activeShader.SetTexture(verticalKernel, "Result", output);
-
-        // Vertical pass
-        activeShader.Dispatch(verticalKernel,
-            Mathf.CeilToInt(segmentationRunner.ImageWidth / 8f),
-            Mathf.CeilToInt(segmentationRunner.ImageHeight / 8f),
-            1);
-
-        // Final combine pass
-        activeShader.SetTexture(combineKernel, "Result", output);
-        activeShader.Dispatch(combineKernel,
-            Mathf.CeilToInt(segmentationRunner.ImageWidth / 8f),
-            Mathf.CeilToInt(segmentationRunner.ImageHeight / 8f),
-            1);
+        activeShader.Dispatch(verticalKernel, groupsX, groupsY, 1);
     }
 
     protected override void OnDestroy()

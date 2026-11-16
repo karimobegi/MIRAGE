@@ -151,6 +151,14 @@ public class YOLOSegmentationRunner : SegmentationRunner
     private bool metadataPending;
     private int clearMaskKernel;
 
+    /// <summary>
+    /// When false (e.g., GPU-only pipeline effects with no active CPU post-processors),
+    /// compact GPU buffers (ClassIdsBuffer, BBoxBuffer, ScoresBuffer) are still populated on the GPU
+    /// without issuing GPU->CPU AsyncGPUReadback stalls.
+    /// </summary>
+    [NonSerialized]
+    public bool RequireCpuMetadataReadback = true;
+
     public ComputeBuffer ClassIdsBuffer { get => labelIDsOutputBuffer; }
 
     public ComputeBuffer BBoxBuffer { get => bboxOutputBuffer; }
@@ -361,14 +369,13 @@ public class YOLOSegmentationRunner : SegmentationRunner
             mask_coefs = Functional.Gather(rawCoefs, 0, Functional.BroadcastTo(indicesUnsqueezed, new int[] { protoCount }));
         }
 
-        var coefs = Functional.Reshape(mask_coefs, new int[] { -1, protoCount, 1, 1 });
-        var masks = Functional.Mul(coefs, maskPrototypes);
-        masks = Functional.ReduceSum(masks, 1); // (N, internalMaskHeight, internalMaskWidth)
-
-        // Prepend one dummy mask before Interpolate so N == 0 frames never pass a zero-length batch dimension.
-        FunctionalTensor upscalingTensor = Functional.Constant(0.0f);
-        upscalingTensor = Functional.BroadcastTo(upscalingTensor, new int[] { 1, internalMaskHeight, internalMaskWidth });
-        upscalingTensor = Functional.Concat(new FunctionalTensor[] { upscalingTensor, masks }, 0);
+        // Combine prototype masks via a single 2D GEMM ((N+1, P) x (P, H*W)) instead of a 4D broadcast
+        // Mul + ReduceSum over (N, P, H, W), cutting intermediate VRAM traffic by ~32x.
+        // Prepending one zero row guarantees M >= 1 even on N == 0 frames before MatMul and Interpolate.
+        var dummyCoef = Functional.Constant(new TensorShape(1, protoCount), new float[protoCount]);
+        var paddedCoefs = Functional.Concat(new FunctionalTensor[] { dummyCoef, mask_coefs }, 0);
+        var flatPrototypes = Functional.Reshape(maskPrototypes, new int[] { protoCount, -1 });
+        var upscalingTensor = Functional.MatMul(paddedCoefs, flatPrototypes);
         upscalingTensor = Functional.Reshape(upscalingTensor, new int[] { -1, 1, internalMaskHeight, internalMaskWidth });
 
         if (ClipPadding)
@@ -379,7 +386,7 @@ public class YOLOSegmentationRunner : SegmentationRunner
         }
 
         upscalingTensor = Functional.Interpolate(upscalingTensor, new int[] { OutputHeight, OutputWidth }, mode: "linear");
-        masks = upscalingTensor[1..];
+        var masks = upscalingTensor[1..];
         masks = Functional.Sigmoid(masks);
         masks = Functional.Where(
             Functional.Greater(masks, Functional.Constant(maskThreshold)),
@@ -520,15 +527,28 @@ public class YOLOSegmentationRunner : SegmentationRunner
         instanceSegmentationShader.SetVector("Scale", boxScale);
         toCPUShader.SetVector("Scale", boxScale);
 
-        visualizationShader = Instantiate(Resources.Load<ComputeShader>("Models/YOLO/InstanceSegmentationVisualizerShader"));
-        visualizationKernel = visualizationShader.FindKernel("VisualizeSegmentation");
-        visualizationShader.SetInt("TextureWidth", OutputWidth);
-        visualizationShader.SetInt("TextureHeight", OutputHeight);
-        visualizationShader.SetBool("ShowObjects", false);
-        // Create visualization texture
-        visualizationTexture = new RenderTexture(OutputWidth, OutputHeight, 0, RenderTextureFormat.ARGB32);
-        visualizationTexture.enableRandomWrite = true;
-        visualizationTexture.Create();
+        if (PublishOutputToUI && OutputImage != null)
+        {
+            EnsureVisualizationResources();
+        }
+    }
+
+    private void EnsureVisualizationResources()
+    {
+        if (visualizationShader == null)
+        {
+            visualizationShader = Instantiate(Resources.Load<ComputeShader>("Models/YOLO/InstanceSegmentationVisualizerShader"));
+            visualizationKernel = visualizationShader.FindKernel("VisualizeSegmentation");
+            visualizationShader.SetInt("TextureWidth", OutputWidth);
+            visualizationShader.SetInt("TextureHeight", OutputHeight);
+            visualizationShader.SetBool("ShowObjects", false);
+        }
+        if (visualizationTexture == null)
+        {
+            visualizationTexture = new RenderTexture(OutputWidth, OutputHeight, 0, RenderTextureFormat.ARGB32);
+            visualizationTexture.enableRandomWrite = true;
+            visualizationTexture.Create();
+        }
     }
 
     private void CreateInstanceSegmentationMask()
@@ -550,27 +570,33 @@ public class YOLOSegmentationRunner : SegmentationRunner
             Mathf.CeilToInt(OutputWidth / 8f), 
             Mathf.CeilToInt(OutputHeight / 8f), 
             1);
-        // Download the instance segmentation buffer to an array
-        // Visualize the segmentation
-        visualizationShader.SetBuffer(visualizationKernel, "InstanceBuffer", OutputBuffer);
-        visualizationShader.SetTexture(visualizationKernel, "OutputTexture", visualizationTexture);
-        visualizationShader.Dispatch(visualizationKernel, 
-            Mathf.CeilToInt(OutputWidth / 8f), 
-            Mathf.CeilToInt(OutputHeight / 8f), 
-            1);
 
-        // Assign the visualization texture to your output image
-        if (OutputImage != null) OutputImage.texture = visualizationTexture;
+        if (PublishOutputToUI && OutputImage != null)
+        {
+            EnsureVisualizationResources();
+            visualizationShader.SetBuffer(visualizationKernel, "InstanceBuffer", OutputBuffer);
+            visualizationShader.SetTexture(visualizationKernel, "OutputTexture", visualizationTexture);
+            visualizationShader.Dispatch(visualizationKernel, 
+                Mathf.CeilToInt(OutputWidth / 8f), 
+                Mathf.CeilToInt(OutputHeight / 8f), 
+                1);
+            OutputImage.texture = visualizationTexture;
+        }
     }
 
     private void ClearInstanceMask()
     {
         instanceSegmentationShader.SetBuffer(clearMaskKernel, "OutputBuffer", OutputBuffer);
         instanceSegmentationShader.Dispatch(clearMaskKernel, Mathf.CeilToInt(OutputWidth / 8f), Mathf.CeilToInt(OutputHeight / 8f), 1);
-        var previous = RenderTexture.active;
-        RenderTexture.active = visualizationTexture;
-        GL.Clear(false, true, Color.clear);
-        RenderTexture.active = previous;
+        if (PublishOutputToUI && OutputImage != null)
+        {
+            EnsureVisualizationResources();
+            var previous = RenderTexture.active;
+            RenderTexture.active = visualizationTexture;
+            GL.Clear(false, true, Color.clear);
+            RenderTexture.active = previous;
+            OutputImage.texture = visualizationTexture;
+        }
     }
 
     /// <summary>
@@ -585,14 +611,13 @@ public class YOLOSegmentationRunner : SegmentationRunner
     /// </summary>
     private void TransferDataToCPU()
     {
-        metadataPending = numDetections > 0;
-        if (!metadataPending) return;
+        if (numDetections <= 0)
+        {
+            metadataPending = false;
+            return;
+        }
 
-        // Create output buffers
-       // labelIDsOutputBuffer = new ComputeBuffer(numDetections, sizeof(int));
-       // bboxOutputBuffer = new ComputeBuffer(numDetections * 4, sizeof(float));
-
-        // Set shader parameters
+        // Always populate compact GPU buffers (ClassIdsBuffer is read directly on GPU by InpaintingMaskBuilder).
         toCPUShader.SetBuffer(extractLabelIDsKernel, "LabelIDsInput", ComputeTensorData.Pin(labelIDTensor).buffer);
         toCPUShader.SetBuffer(extractLabelIDsKernel, "BBoxInput", ComputeTensorData.Pin(bboxTensor).buffer);
         toCPUShader.SetBuffer(extractLabelIDsKernel, "ScoresInput", ComputeTensorData.Pin(scoresTensor).buffer);
@@ -600,22 +625,18 @@ public class YOLOSegmentationRunner : SegmentationRunner
         toCPUShader.SetBuffer(extractLabelIDsKernel, "BBoxOutput", bboxOutputBuffer);
         toCPUShader.SetBuffer(extractLabelIDsKernel, "ScoresOutput", scoresOutputBuffer);
         toCPUShader.SetInt("NumDetections", numDetections);
-
-        // Dispatch shader
         toCPUShader.Dispatch(extractLabelIDsKernel, numDetections, 1, 1);
 
-        
-        //int[] labelResults = new int[numDetections];
-        //float[] bboxResults = new float[numDetections * 4];
-        //float[] scoresResults = new float[numDetections];
+        if (!RequireCpuMetadataReadback)
+        {
+            metadataPending = false;
+            return;
+        }
+
+        metadataPending = true;
         labelsReadback = AsyncGPUReadback.Request(labelIDsOutputBuffer);
         boxesReadback = AsyncGPUReadback.Request(bboxOutputBuffer);
         scoresReadback = AsyncGPUReadback.Request(scoresOutputBuffer);
-        // Create new native arrays
-        //bboxData = new NativeArray<float>(bboxResults, Allocator.Persistent);
-        //labelIDData = new NativeArray<int>(labelResults, Allocator.Persistent);
-        //scoresData = new NativeArray<float>(scoresResults, Allocater.Persistent);
-
     }
 
     private void PrepareToCPUShader()

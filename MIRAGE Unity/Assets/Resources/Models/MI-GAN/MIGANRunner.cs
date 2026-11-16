@@ -14,6 +14,7 @@ public class MIGANRunner : InpaintingRunner, IEffectHandler
 {
     public EffectType EffectType => EffectType.Inpainting;
     public InpaintingSetting[] SelectedClasses = Array.Empty<InpaintingSetting>();
+    public override bool HasActiveSelection => SelectedClasses != null && SelectedClasses.Length > 0;
     public RawImage MaskImage;
     public RawImage DebugOutputImage;
 

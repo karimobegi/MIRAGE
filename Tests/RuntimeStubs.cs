@@ -262,7 +262,7 @@ namespace UnityEngine
         public static Rect MinMaxRect(float x0,float y0,float x1,float y1)=>new Rect(x0,y0,x1-x0,y1-y0);
         public bool Overlaps(Rect other)=>xMin<other.xMax&&xMax>other.xMin&&yMin<other.yMax&&yMax>other.yMin;
     }
-    public class RectTransform : Transform { public Rect rect=new Rect { size=new Vector2(640,360) }; public Vector2 pivot, anchoredPosition; }
+    public class RectTransform : Transform { public Rect rect=new Rect { size=new Vector2(640,360) }; public Vector2 pivot, anchoredPosition, sizeDelta; }
     public class Camera : MonoBehaviour { public RenderTexture targetTexture; }
     public partial class GameObject : Object
     {
@@ -283,7 +283,11 @@ namespace UnityEngine
         public T GetComponentInParent<T>() where T:new() => new T();
     }
 }
-namespace UnityEngine.UI { public class RawImage : UnityEngine.Object { public UnityEngine.Texture texture; } }
+namespace UnityEngine.UI
+{
+    public class RawImage : UnityEngine.Object { public UnityEngine.Texture texture; }
+    public class Image : UnityEngine.Object { public UnityEngine.Color color; }
+}
 namespace TMPro
 {
     public class TMP_Text : UnityEngine.Object
